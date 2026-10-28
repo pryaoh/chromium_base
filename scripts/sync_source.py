@@ -250,6 +250,17 @@ def verify_snapshot(destination):
             "source_files": len(inventory["files"])}
 
 
+def write_commit_timestamp(cache, revision, destination):
+    """Replace the gclient timestamp hook without requiring a Git worktree."""
+    timestamp = git(cache, "show", "-s", "--format=%ct", revision,
+                    capture_output=True, text=True).stdout.strip()
+    if not re.fullmatch(r"[0-9]+", timestamp):
+        raise ValueError("Pinned commit has an invalid timestamp")
+    target = Path(destination) / "build/util/LASTCHANGE.committime"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(timestamp + "\n", encoding="utf-8")
+
+
 def synchronize(lock, destination, cache_root, overlay):
     destination = Path(destination).resolve()
     if destination.exists():
@@ -267,6 +278,7 @@ def synchronize(lock, destination, cache_root, overlay):
         for repo, cache in prepared:
             print(f"Export: {repo['name']}", flush=True)
             export_tree(cache, repo["revision"], repo["paths"], stage / repo["destination"])
+        write_commit_timestamp(prepared[0][1], prepared[0][0]["revision"], stage)
         if overlay:
             for path in sorted(Path(overlay).rglob("*")):
                 if path.is_file():

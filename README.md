@@ -6,9 +6,13 @@ Chromium `base`와 필요한 의존성을 선택 추출하여 독립 라이브�
 
 현재는 선택 추출, 고정 바이너리 도구 다운로드, Windows x64 빌드 드라이버를 제공합니다.
 **Windows SDK 10.0.28000.0 설치와 필수 파일 검증을 완료**했습니다.
-GN 재실행은 SDK 검사를 통과했으나 `third_party/closure_compiler/compile_js.gni`
-누락으로 중단되었습니다. 해당 파일은 protobuf의 GN 규칙에서 가져오는 빌드 입력입니다.
-의존성이 모두 충족되는지, 정적·동적 라이브러리가 실제로 빌드되는지는 아직 검증하지 못했습니다.
+누락된 빌드 의존성을 보완하여 Windows x64 / Chromium LLVM의
+**정적 `base` 타깃 실제 빌드가 성공**했습니다. 정적 GN 생성은 847개 타깃,
+Ninja 입력 검사는 2,346개 작업을 통과했습니다. 동적 구성도 GN 생성(856개 타깃)과
+Ninja 입력 검사(2,275개 작업)를 통과했습니다.
+검증 산출물은 `vendor/chromium/out/dependency-audit/obj/base/base.lib`입니다.
+이는 객체 파일을 참조하는 thin archive이므로, 배포용으로 쓰려면 일반 정적 라이브러리와
+전이 의존성을 묶는 패키징이 필요합니다. DLL 링크와 외부 LLVM의 실제 빌드는 미검증입니다.
 배포용 SDK/CMake 패키지와 소비 프로그램, macOS/Linux 네이티브 빌드는 후속 작업입니다.
 
 ## 구조
@@ -28,6 +32,10 @@ vendor/chromium/            # 두 LLVM 모드가 공유하는 Git 없는 추출�
 `vendor/`, `.tools/`, `.cache/`는 생성물로 Git에서 제외합니다. 소스 동기화에는
 컴파일러 선택 옵션이 없으며, 컴파일러를 바꿀 때 소스를 다시 받지 않습니다.
 원본의 경로 구조와 라이선스를 유지합니다. `standalone/`의 파일만 명시적으로 덮어씁니다.
+추출 시 고정 커밋의 시각으로 `build/util/LASTCHANGE.committime`도 생성합니다.
+GN의 `root_patterns`는 기본 타깃과 `base`의 전이 의존성만 선택하고,
+`enable_js_protobuf=false`로 C++ 라이브러리에 불필요한 JavaScript 생성 규칙을 제외합니다.
+BoringSSL, NASM, RE2, compiler-rt, LLVM libc도 Chromium `DEPS`와 같은 커밋으로 고정합니다.
 
 ## 준비 및 소스 추출
 
@@ -123,8 +131,8 @@ VS/SDK 정보와 실행 상태를 기록합니다. 환경이 달라지거나 `ar
 
 ## 용량과 검증 범위
 
-현재 실제 선택 추출본은 27,495개 파일, 약 249 MiB입니다.
-의존성 보강에 따라 달라질 수 있습니다. 부분 Git 캐시, 압축 파일,
+현재 실제 선택 추출본은 34,706개 파일, 약 360 MiB입니다.
+부분 Git 캐시, 압축 파일,
 도구 설치본과 빌드 산출물의 용량은 별도입니다.
 실제 다운로드·설치 후 측정한 크기입니다. 설치 크기는 파일 크기의 합계로,
 파일시스템 할당 단위에 따른 차이는 포함하지 않습니다.

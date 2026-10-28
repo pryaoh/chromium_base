@@ -1,5 +1,13 @@
 # Standalone base entry point; the source snapshot is common to both LLVM modes.
+import("//build/dotfile_settings.gni")
+
 buildconfig = "//build/config/BUILDCONFIG.gn"
+expand_directory_allowlist = build_dotfile_settings.expand_directory_allowlist
+root_patterns = [ "//:default" ]
+default_args = {
+  # This C++ library does not generate JavaScript protobuf bindings.
+  enable_js_protobuf = false
+}
 script_executable = getenv("CHROMIUM_BASE_PYTHON")
 if (script_executable == "") {
   script_executable = "python3"

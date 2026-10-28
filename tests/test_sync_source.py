@@ -82,6 +82,15 @@ class SourceTests(unittest.TestCase):
         self.assertFalse((dest / ".git").exists())
         with self.assertRaisesRegex(ValueError, "not found"):
             sync.export_tree(repo, revision, ["base", "missing-source-path"], self.root / "bad-snapshot")
+        # Git-less builds still need the timestamp normally created by gclient.
+        expected = git("show", "-s", "--format=%ct", revision)
+        later_env = dict(os.environ, GIT_COMMITTER_DATE="2030-01-01T00:00:00Z")
+        subprocess.check_call(["git", "-C", str(repo), "-c", "user.name=Test",
+                               "-c", "user.email=test@example.invalid", "commit",
+                               "--allow-empty", "-qm", "later HEAD"], env=later_env)
+        self.assertNotEqual(git("show", "-s", "--format=%ct", "HEAD"), expected)
+        sync.write_commit_timestamp(repo, revision, dest)
+        self.assertEqual((dest / "build/util/LASTCHANGE.committime").read_text(), expected + "\n")
 
     def test_snapshot_verification_detects_modified_and_missing_sources(self):
         sync = self.module()

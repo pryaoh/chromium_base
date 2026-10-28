@@ -31,8 +31,8 @@
 Files: `source.lock.json`, `scripts/sync_source.py`, `tests/test_sync_source.py`.
 - [x] Test path/revision validation, source-only selection, safe extraction, provenance, and existing output protection.
 - [x] Implement selective Git export and locked dependencies.
-- [x] Synchronize real selected sources: final snapshot has 27,495 files / approximately 249 MiB. File checksums and all installed tool payloads were verified; rustc --version also executed successfully.
-- [ ] Resolve remaining build dependencies using GN; the required SDK is now installed.
+- [x] Synchronize real selected sources: dependency-complete GN snapshot has 34,706 files / 377,842,355 bytes (approximately 360 MiB). File checksums and installed tool payloads were verified; rustc --version also executed successfully.
+- [x] Resolve remaining Windows static build dependencies using GN: 847 targets generated and Ninja dry run passed with 2,346 steps. Compilation/linking is a separate validation step.
 
 ### Task 2: Standalone GN entry and build driver
 
@@ -66,3 +66,19 @@ success is claimed. GN was rerun with the SDK present: SDK setup passed, then
 `third_party/protobuf/proto_library.gni:170` failed to import
 `third_party/closure_compiler/compile_js.gni`. This is the next source-selection
 gap to resolve, not an SDK installation failure.
+
+The subsequent dependency pass resolved that gap using the supported
+`enable_js_protobuf=false` option, a narrowly selected GN root, and upstream
+directory-expansion settings. It added the required BoringSSL, NASM, RE2,
+compiler-rt, LLVM libc headers, GRIT, DebugVisualizers, and hmac-sha256 inputs to
+the common source lock. The exporter now generates the build timestamp from the
+pinned commit. Static GN generation and Ninja's input dry run both passed.
+The full compiler/linker validation is tracked separately from this GN result.
+Actual compilation additionally identified NASM's `autoconf` headers and
+GoogleTest's production-only `gtest_prod.h`; both are now pinned in the lock.
+The resumed Ninja static build exited 0 and produced a 5,591,220-byte `base.lib`
+at `vendor/chromium/out/dependency-audit/obj/base/base.lib`. Its archive signature
+is `!<thin>`, so object files and transitive dependencies still need packaging.
+Shared GN generation passed with 856 targets from 318 files and its Ninja dry
+run passed with 2,275 steps. Both managed configurations match the final verified
+source inventory. A DLL build and external LLVM native validation are not claimed.

@@ -18,12 +18,16 @@
         "chrome/VERSION",
         "testing",
         "third_party/abseil-cpp",
+        "third_party/boringssl",
+        "third_party/compiler-rt",
         "third_party/googletest",
         "third_party/libc++",
         "third_party/libc++abi",
         "third_party/libunwind",
+        "third_party/llvm-libc",
         "third_party/modp_b64",
         "third_party/protobuf",
+        "third_party/re2",
         "third_party/rust/anstyle",
         "third_party/rust/anyhow",
         "third_party/rust/chromium_crates_io/vendor/anstyle-v1",
@@ -39,6 +43,7 @@
         "third_party/rust/chromium_crates_io/vendor/equivalent-v1",
         "third_party/rust/chromium_crates_io/vendor/foldhash-v0_2",
         "third_party/rust/chromium_crates_io/vendor/hashbrown-v0_17",
+        "third_party/rust/chromium_crates_io/vendor/hmac-sha256-v1",
         "third_party/rust/chromium_crates_io/vendor/indexmap-v2",
         "third_party/rust/chromium_crates_io/vendor/itoa-v1",
         "third_party/rust/chromium_crates_io/vendor/libc-v0_2",
@@ -75,6 +80,7 @@
         "third_party/rust/equivalent",
         "third_party/rust/foldhash",
         "third_party/rust/hashbrown",
+        "third_party/rust/hmac_sha256",
         "third_party/rust/indexmap",
         "third_party/rust/itoa",
         "third_party/rust/libc",
@@ -102,9 +108,11 @@
         "third_party/simdutf",
         "third_party/zlib",
         "tools/clang",
+        "tools/grit",
         "tools/metrics",
         "tools/protoc_wrapper",
-        "tools/rust"
+        "tools/rust",
+        "tools/win/DebugVisualizers"
       ]
     },
     {
@@ -155,6 +163,93 @@
         "python",
         "tools",
         "LICENSE"
+      ]
+    },
+    {
+      "name": "boringssl",
+      "url": "https://boringssl.googlesource.com/boringssl.git",
+      "revision": "e651545da6e26e1f4420723a3b69a78ed1b9c51d",
+      "destination": "third_party/boringssl/src",
+      "paths": [
+        "LICENSE",
+        "include",
+        "crypto",
+        "ssl",
+        "pki",
+        "gen",
+        "third_party/fiat",
+        "rust"
+      ]
+    },
+    {
+      "name": "nasm",
+      "url": "https://chromium.googlesource.com/chromium/deps/nasm.git",
+      "revision": "525a09a813be0f75b646ee93fc2a31c27b87d722",
+      "destination": "third_party/nasm",
+      "paths": [
+        "AUTHORS",
+        "BUILD.gn",
+        "LICENSE",
+        "asm",
+        "autoconf",
+        "common",
+        "config",
+        "disasm",
+        "include",
+        "macros",
+        "nasm_assemble.gni",
+        "nasm_sources.gni",
+        "nasmlib",
+        "output",
+        "stdlib",
+        "version.h",
+        "x86",
+        "zlib"
+      ]
+    },
+    {
+      "name": "compiler-rt",
+      "url": "https://chromium.googlesource.com/external/github.com/llvm/llvm-project/compiler-rt.git",
+      "revision": "527b86cfd4ce3ee3e1b607176405bf19c38d1f4c",
+      "destination": "third_party/compiler-rt/src",
+      "paths": [
+        "LICENSE.TXT",
+        "lib/builtins",
+        "include"
+      ]
+    },
+    {
+      "name": "llvm-libc",
+      "url": "https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libc.git",
+      "revision": "7a072c141dfbc93f8787180e1112d94b172112a4",
+      "destination": "third_party/llvm-libc/src",
+      "paths": [
+        "LICENSE.TXT",
+        "hdr",
+        "include",
+        "shared",
+        "src/__support"
+      ]
+    },
+    {
+      "name": "re2",
+      "url": "https://chromium.googlesource.com/external/github.com/google/re2.git",
+      "revision": "2da0056814cf180480a19f5cf811e7e1c054bf6d",
+      "destination": "third_party/re2/src",
+      "paths": [
+        "LICENSE",
+        "re2",
+        "util"
+      ]
+    },
+    {
+      "name": "googletest",
+      "url": "https://chromium.googlesource.com/external/github.com/google/googletest.git",
+      "revision": "0b656495436f57212be8700794a3d5fb14000c5f",
+      "destination": "third_party/googletest/src",
+      "paths": [
+        "LICENSE",
+        "googletest/include/gtest/gtest_prod.h"
       ]
     }
   ]

@@ -95,8 +95,9 @@ Do not equate source synchronization or driver tests with a successful native bu
 4. Build both variants and compile/run consumer examples against the packaged
    headers and libraries outside the Chromium source tree.
 
-Library builds and ABI compatibility have not been validated. Broad MSVC STL
-consumer compatibility and a stable C ABI are not promised by this configuration.
+The Windows x64 Chromium LLVM static target has built successfully. Shared-library
+linking, external LLVM builds, packaging, and consumer ABI compatibility remain
+unverified. Broad MSVC STL compatibility and a stable C ABI are not promised.
 
 ## Implementation evidence on 2026-10-28
 
@@ -107,10 +108,25 @@ consumer compatibility and a stable C ABI are not promised by this configuration
   The user subsequently authorized installation. Microsoft's standalone SDK
   installer completed successfully, without restarting or closing the running VS.
   Headers, x86/x64/ARM64 libraries and rc.exe, UWP headers, and x64 dbghelp.dll were
-  verified; rc.exe reports `10.0.28000.2526`. Dependency closure and library builds
-  remain unverified. The subsequent GN attempt passed the SDK setup and stopped
-  because `third_party/protobuf/proto_library.gni` imports the unselected
-  `third_party/closure_compiler/compile_js.gni`.
+  verified; rc.exe reports `10.0.28000.2526`.
+- Standalone GN selects only `//:default` and its transitive dependencies through
+  `root_patterns`, inherits the upstream directory-expansion allowlist, and
+  disables JavaScript protobuf generation using `enable_js_protobuf=false`.
+  The exporter generates `LASTCHANGE.committime` from the pinned commit.
+- Windows dependency selection now includes BoringSSL, NASM, RE2, compiler-rt,
+  LLVM libc support headers, GRIT, DebugVisualizers, and the Rust prelude's
+  hmac-sha256 crate. All external repository revisions match Chromium DEPS.
+- Chromium LLVM static GN generation passed: 847 targets from 317 files. Ninja's
+  dry run passed with 2,346 steps. This checks declared build inputs; it does not
+  by itself establish compilation, linking, or consumer ABI compatibility.
+- Actual static compilation completed successfully after adding NASM autoconf
+  headers and GoogleTest's production-only `gtest_prod.h`. The audit output is
+  `vendor/chromium/out/dependency-audit/obj/base/base.lib` (5,591,220 bytes).
+  Its `!<thin>` archive header means it references object files in the build tree;
+  it is not a standalone distribution package. Shared GN generation also passed
+  (856 targets from 318 files), and its Ninja dry run passed with 2,275 steps,
+  without claiming a completed DLL build. Both managed configurations were
+  regenerated after the final header additions and match the verified inventory.
 - LLVM, GN, Ninja and Rust live outside the source snapshot. Rust package identity
   is checked against the lock rather than inferred from a version label alone.
 
