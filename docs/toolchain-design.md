@@ -103,10 +103,14 @@ consumer compatibility and a stable C ABI are not promised by this configuration
 - Selective extraction produced a Git-independent source tree; neither compiler
   mode requires a complete Chromium working tree.
 - `source.lock.json` has no compiler mode. Both modes default to `vendor/chromium`.
-- Native GN was executed with the pinned Chromium LLVM. It entered `base/BUILD.gn`
-  and failed in `build/toolchain/win/setup_toolchain.py` because the required SDK
-  `10.0.28000.0` include directory is absent. Dependency closure and library builds
-  remain unverified until this prerequisite and any subsequent GN errors are resolved.
+- The first native GN attempt failed because SDK `10.0.28000.0` was absent.
+  The user subsequently authorized installation. Microsoft's standalone SDK
+  installer completed successfully, without restarting or closing the running VS.
+  Headers, x86/x64/ARM64 libraries and rc.exe, UWP headers, and x64 dbghelp.dll were
+  verified; rc.exe reports `10.0.28000.2526`. Dependency closure and library builds
+  remain unverified. The subsequent GN attempt passed the SDK setup and stopped
+  because `third_party/protobuf/proto_library.gni` imports the unselected
+  `third_party/closure_compiler/compile_js.gni`.
 - LLVM, GN, Ninja and Rust live outside the source snapshot. Rust package identity
   is checked against the lock rather than inferred from a version label alone.
 
