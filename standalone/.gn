@@ -1,0 +1,6 @@
+# Standalone base entry point; the source snapshot is common to both LLVM modes.
+buildconfig = "//build/config/BUILDCONFIG.gn"
+script_executable = getenv("CHROMIUM_BASE_PYTHON")
+if (script_executable == "") {
+  script_executable = "python3"
+}

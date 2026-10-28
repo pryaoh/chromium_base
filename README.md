@@ -1,139 +1,152 @@
 # chromium_base
 
-Chromium `base`를 독립 라이브러리로 사용하기 위한 프로젝트입니다.
-현재는 **기존 Chromium 체크아웃을 빌드하는 Windows x64 드라이버**를 제공합니다.
-외부 LLVM과 Chromium 제공 LLVM을 명시적으로 선택할 수 있습니다.
+Chromium `base`와 필요한 의존성을 선택 추출하여 독립 라이브러리로 만들기 위한 프로젝트입니다.
+**외부 LLVM과 Chromium 제공 LLVM 모두 동일한 소스 추출본을 사용합니다.**
+전체 Chromium 체크아웃, Chrome 브라우저 소스, 전체 LLVM 소스 빌드는 필요하지 않습니다.
 
-아직 Chromium 소스를 이 저장소로 추출하지 않았으며, 배포용 SDK·CMake 패키지는
-구현하지 않았습니다. 실제 `base` 컴파일 및 외부 소비 프로그램 실행도 검증 전입니다.
-macOS/Linux 네이티브 빌드는 후속 범위입니다. CI의 Linux 작업은 Python 드라이버
-테스트이며 Linux용 `base` 빌드가 아닙니다.
+현재는 선택 추출, 고정 바이너리 도구 다운로드, Windows x64 빌드 드라이버를 제공합니다.
+실제 GN 생성은 실행했지만 **Windows SDK 10.0.28000.0 미설치로 중단**되었습니다.
+의존성이 모두 충족되는지, 정적·동적 라이브러리가 실제로 빌드되는지는 아직 검증하지 못했습니다.
+배포용 SDK/CMake 패키지와 소비 프로그램, macOS/Linux 네이티브 빌드는 후속 작업입니다.
 
-## 컴파일러 모드
-
-| 옵션 | 외부 LLVM (기본값) | Chromium 제공 LLVM |
-|---|---|---|
-| 선택 | `--toolchain external` | `--toolchain chromium` |
-| LLVM 경로 | `--llvm-root`, `LLVM_ROOT`, `Program Files/LLVM` 순 | 체크아웃의 `third_party/llvm-build/Release+Asserts` |
-| Chromium 전용 플러그인 | 비활성화 | 원본 기본값 유지 |
-| 표준 라이브러리 | Chromium의 libc++ | Chromium의 libc++ |
-| 모드 자동 전환 | 하지 않음 | 하지 않음 |
-
-컴파일러가 없으면 실패합니다. Chromium 모드에서 `--llvm-root`를 지정하면 오류입니다.
-두 모드의 바이너리나 오브젝트 파일을 혼합하는 ABI 호환성은 보장하지 않습니다.
-라이브러리 소비 프로그램에도 동일한 표준 라이브러리·호환되는 빌드 설정이 필요합니다.
-
-## 사전 준비
-
-1. Python 3.10 이상 및 Git.
-2. Visual Studio의 C++ 데스크톱 개발 도구와 해당 Chromium 리비전이 요구하는
-   Windows SDK 및 추가 구성 요소. `doctor`는 기본 x64 도구를 확인하며, 정확한
-   최소 SDK 버전과 전체 구성 요소 호환성은 GN 생성/컴파일 단계에서 검증됩니다.
-3. `depot_tools`와 의존성 및 hooks가 정상 동기화된 Chromium `src` 체크아웃.
-   `base/`만 복사한 디렉터리는 사용할 수 없습니다.
-4. 외부 모드에서는 `clang-cl.exe`, `lld-link.exe`를 포함한 별도 LLVM.
-   Chromium 모드에서는 체크아웃에 맞춰 hooks로 설치된 LLVM.
-
-정적 라이브러리 생성은 원본 GN 규칙대로 `lld-link /lib`를 사용합니다.
-Chromium 소스와 LLVM은 **공백과 셸 특수문자가 없는 경로**에 준비하세요.
-LLVM 기본 설치 위치인 `C:/Program Files/LLVM`은 감지 대상이지만, 원본 GN 규칙이
-컴파일러 경로를 따옴표 없이 사용하는 부분이 있어 `doctor`에서 빌드를 차단합니다.
-외부 LLVM은 `C:/LLVM` 같은 위치를 권장합니다. `plan`은 오프라인 설정 미리보기라
-이러한 경로도 표현할 수 있으며, 실제 빌드 적합성은 `doctor`가 검사합니다.
-
-이 드라이버는 다운로드나 시스템 설치를 수행하지 않습니다.
-먼저 [Windows 체크아웃 안내](https://chromium.googlesource.com/chromium/src/+/main/docs/windows_build_instructions.md)를
-따라 여유 공간이 충분한 위치에서 Chromium과 `depot_tools`를 준비하세요.
-원하는 **특정 커밋 SHA로 체크아웃한 뒤 해당 리비전의 DEPS와 hooks를 동기화**해야 합니다.
-Chromium 소스와 별개로 관리되는 의존성도 맞춰야 하므로 Git checkout만으로는 부족합니다.
-Windows의 로컬 Visual Studio 사용 설정은 동기화 전에 적용합니다.
-
-```powershell
-$env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
-```
-
-LLVM 버전은 선택한 Chromium 리비전과 함께 결정하세요. 드라이버는 읽을 수 있는
-단일 리터럴로 선언된 `clang_version`과 LLVM 도구의 major 버전 불일치를 차단합니다.
-조건부/동적 선언은 잘못 추측하지 않고 경고를 남겨 GN 검증으로 넘깁니다. 같은 major라도
-최신 Clang 기능·libc++ 요구사항 때문에 실패할 수 있으므로 실제 빌드가 필요합니다.
-외부 LLVM 설정 근거는 [Chromium Clang 문서](https://chromium.googlesource.com/chromium/src/+/main/docs/clang.md#using-a-custom-clang-binary)입니다.
-
-## 사용
-
-아래 경로는 준비한 체크아웃과 도구의 실제 위치로 바꿔 사용합니다.
-`python`은 Windows Store 실행 별칭이 아닌 실제 Python이어야 합니다.
-
-```powershell
-$src = 'D:/chromium/src'
-$depot = 'D:/depot_tools'
-$llvm = 'C:/LLVM'
-
-# 설치나 파일 변경 없이 생성할 설정 확인
-python scripts/chromium_base.py plan --source $src --llvm-root $llvm
-
-# 필요한 도구를 한 번에 확인: 누락 시 JSON 오류 목록 및 종료 코드 1
-python scripts/chromium_base.py doctor --source $src --llvm-root $llvm --depot-tools $depot
-
-# 외부 LLVM, 정적 라이브러리
-python scripts/chromium_base.py configure --source $src --llvm-root $llvm --depot-tools $depot
-python scripts/chromium_base.py build --source $src --llvm-root $llvm --depot-tools $depot
-
-# Chromium 제공 LLVM, 동적 라이브러리
-python scripts/chromium_base.py configure --source $src --toolchain chromium --linkage shared --depot-tools $depot
-python scripts/chromium_base.py build --source $src --toolchain chromium --linkage shared --depot-tools $depot
-```
-
-`--linkage static|shared`, `--configuration release|debug`를 조합할 수 있습니다.
-`configure`와 `build`에는 같은 옵션을 전달하세요. 기본값은 `external/static/release`입니다.
-GN은 체크아웃의 `buildtools/win/gn.exe`를 사용하며 `--gn PATH`로 명시할 수 있습니다.
-`--source` 생략 시 이 저장소의 `.upstream/src`를 사용합니다.
-
-빌드는 선택한 체크아웃 안에서 `autoninja.py -C <output> base`를 실행합니다.
-자식 프로세스에만 `DEPOT_TOOLS_WIN_TOOLCHAIN=0`, `DEPOT_TOOLS_UPDATE=0`을 적용하며,
-원격 빌드는 GN 인자로 비활성화합니다.
-
-## 출력과 재현 정보
+## 구조
 
 ```text
-<src>/out/chromium-base/
-  windows-x64-external-static-release/
-  windows-x64-external-shared-release/
-  windows-x64-chromium-static-release/
-  windows-x64-chromium-shared-release/
-  ...-debug/
+source.lock.json            # 공통 소스 커밋·선택 경로·별도 저장소 SHA
+tools.lock.json             # Windows 도구 URL·SHA-256
+standalone/                # 독립 GN 진입점과 gclient 대체 설정
+vendor/chromium/            # 두 LLVM 모드가 공유하는 Git 없는 추출본
+.tools/gn/                 # GN
+.tools/ninja/              # Ninja
+.tools/rust-toolchain/     # 두 모드에 공통으로 필요한 Rust 도구
+.tools/chromium-llvm/      # Chromium LLVM 모드에서만 필요
+.cache/standalone/         # 부분 Git 객체 캐시와 다운로드 압축 파일
 ```
 
-각 폴더에는 `args.gn`과 `.chromium-base.json`이 생성됩니다. JSON에는 소스 커밋,
-LLVM 버전 출력, GN 버전, 감지한 VS/SDK 경로와 실행 상태를 기록합니다.
-기존 사용자 출력 폴더를 덮어쓰지 않으며 수동으로 변경한 `args.gn`도 보존합니다.
-컴파일러·소스 커밋·기록된 환경이 변경되면 기존 출력을 재사용하지 않습니다.
-그 경우 기존 출력 폴더를 별도 위치에 보관한 뒤 다시 `configure`하세요.
+`vendor/`, `.tools/`, `.cache/`는 생성물로 Git에서 제외합니다. 소스 동기화에는
+컴파일러 선택 옵션이 없으며, 컴파일러를 바꿀 때 소스를 다시 받지 않습니다.
+원본의 경로 구조와 라이선스를 유지합니다. `standalone/`의 파일만 명시적으로 덮어씁니다.
 
-GN 생성 후 `toolchain.ninja`가 선택한 `clang-cl`과 `lld-link`를 참조하는지 확인합니다.
-생성 또는 빌드 실패 시 종료 코드를 전달하고 성공 상태를 기록하지 않습니다.
-중단된 생성/빌드는 다시 `configure`한 후 실행할 수 있습니다.
+## 준비 및 소스 추출
 
-`base` 타깃 빌드 결과가 곧 단일 배포용 라이브러리는 아닙니다. 정적 빌드는 전이
-의존 라이브러리와 시스템 라이브러리가 필요할 수 있고, 동적 빌드는 의존 DLL과
-import library가 필요합니다. 공개/생성 헤더, 링크 설정, 런타임 파일을 수집하는
-패키징과 외부 소비 프로젝트 테스트는 다음 단계입니다.
+Python 3.10 이상과 Git이 필요합니다. 아래 `python`은 Windows Store 실행 별칭이 아닌
+실제 Python 실행 파일이어야 합니다. 소스·LLVM 경로에는 공백이나 셸 특수문자를 쓰지 마세요.
 
-## 테스트 및 현재 검증 범위
+```powershell
+# 컴파일러 모드에 관계없이 한 번만 실행
+python scripts/sync_source.py
+python scripts/sync_source.py --verify
+
+# 두 모드의 공통 빌드 도구
+python scripts/sync_tools.py gn ninja rust-toolchain
+
+# Chromium LLVM 모드를 사용할 때 추가
+python scripts/sync_tools.py chromium-llvm
+```
+
+소스는 Chromium 커밋 `1633b610f5957ddd13a26fe87628c0768067e740`에 고정되어 있습니다.
+`base`, GN 빌드 규칙, 선택된 C++/Rust 의존성과 라이선스를 가져옵니다.
+별도 저장소인 libc++, libc++abi, libunwind, Perfetto도 해당 DEPS의 SHA로 고정합니다.
+Git 부분 클론에서 선택된 파일의 객체만 내려받으며 전체 소스 트리를 체크아웃하지 않습니다.
+
+추출본의 `.chromium-source.json`에는 잠금 목록과 파일별 SHA-256이 들어갑니다.
+검증 시 수정·삭제·추가된 소스를 감지하며 `out/`만 빌드 생성물로 제외합니다.
+기존 추출본은 덮어쓰지 않습니다. 잠금 목록 변경 후 다시 추출하려면 기존 폴더를
+보관하거나 `--destination`으로 새 경로를 선택하고 빌드에 `--source`를 지정하세요.
+
+선택 범위는 `//base:base`를 시작점으로 한 의존성 목록입니다. 전체 `base` 하위의
+모든 테스트·선택 라이브러리가 빌드된다는 뜻은 아닙니다. GN 검증이 끝나기 전에는
+이 목록을 완성된 최소 의존성 집합으로 취급하지 마세요.
+
+## 컴파일러 선택
+
+| 항목 | 외부 LLVM (기본값) | Chromium LLVM |
+|---|---|---|
+| 선택 | `--toolchain external` | `--toolchain chromium` |
+| LLVM 위치 | `--llvm-root` 또는 `LLVM_ROOT` | `.tools/chromium-llvm` |
+| Chromium 전용 플러그인 | 비활성화 | 원본 기본값 유지 |
+| 소스 | `vendor/chromium` | 동일한 `vendor/chromium` |
+| C++ 표준 라이브러리 | 고정된 Chromium libc++ | 동일한 libc++ |
+| Rust 의존성 | 공통 고정 Rust 도구 | 동일한 Rust 도구 |
+
+현재 소스 커밋은 **Clang major 24**를 요구합니다. 외부 LLVM은 호환되는 `clang-cl.exe`와
+`lld-link.exe`를 별도로 준비해야 합니다. major 일치는 필요 조건이며 실제 호환성을 보장하지는
+않습니다. 더 오래된 LLVM을 사용하려면 그 LLVM에 맞는 Chromium 커밋과 의존성을 함께
+재고정하고 검증해야 합니다. 두 모드 사이의 자동 전환은 하지 않습니다.
+
+`--llvm-root`와 `LLVM_ROOT`를 생략하면 `Program Files/LLVM`을 감지하지만, upstream GN의
+일부 명령이 경로를 따옴표 없이 사용하므로 공백 경로는 `doctor`에서 차단합니다.
+외부 LLVM에는 `C:/LLVM` 같은 경로를 사용하세요.
+
+## Windows 빌드
+
+Visual Studio C++ 데스크톱 도구와 선택한 커밋이 요구하는 SDK가 필요합니다.
+이 PC에는 VS 2026 및 SDK 10.0.22621.0/10.0.26100.0이 확인되었으나,
+GN 실행은 필요한 `Windows Kits/10/include/10.0.28000.0/um`이 없어서 실패했습니다.
+해당 SDK 설치 및 이후 GN 의존성 확인이 완료되어야 아래 빌드가 성공할 수 있습니다.
+드라이버는 시스템 구성 요소를 자동 설치하지 않습니다.
+
+```powershell
+# 설정 미리보기와 환경 검사
+python scripts/chromium_base.py plan --llvm-root C:/LLVM
+python scripts/chromium_base.py doctor --llvm-root C:/LLVM
+
+# 외부 LLVM, 정적 라이브러리
+python scripts/chromium_base.py configure --llvm-root C:/LLVM
+python scripts/chromium_base.py build --llvm-root C:/LLVM
+
+# Chromium LLVM, 동적 라이브러리
+python scripts/chromium_base.py configure --toolchain chromium --linkage shared
+python scripts/chromium_base.py build --toolchain chromium --linkage shared
+```
+
+`--linkage static|shared`, `--configuration release|debug`를 조합합니다.
+`configure`와 `build`에는 같은 옵션을 전달하세요. 기본값은 `external/static/release`입니다.
+GN과 Ninja는 `.tools`에서 사용하며 `--gn`, `--ninja`로 경로를 지정할 수 있습니다.
+`depot_tools`는 필수가 아닙니다. 기존 환경에서는 `--depot-tools`로 `autoninja.py`를
+명시하여 사용할 수 있습니다.
+
+출력은 `<source>/out/chromium-base/windows-x64-<compiler>-<linkage>-<configuration>`으로
+분리합니다. `.chromium-base.json`에 소스 식별값, LLVM/GN/Ninja 버전, 검증한 Rust 도구,
+VS/SDK 정보와 실행 상태를 기록합니다. 환경이 달라지거나 `args.gn`이 수정되면 기존 출력을
+재사용하지 않습니다. GN 생성 후 실제 명령이 선택한 `clang-cl`과 `lld-link`를 참조하는지
+확인하고, 실패하면 실패 종료 코드와 상태를 유지합니다.
+
+`base` 타깃 출력이 곧 단일 배포용 라이브러리는 아닙니다. 전이 의존 라이브러리,
+생성 헤더, 시스템 링크 옵션, DLL 및 import library 등을 포함한 패키징과 소비자 검증이
+추가로 필요합니다. 소비 프로그램도 같은 표준 라이브러리와 호환되는 설정을 사용해야 합니다.
+
+## 용량과 검증 범위
+
+현재 실제 선택 추출본은 27,495개 파일, 약 249 MiB입니다.
+의존성 보강에 따라 달라질 수 있습니다. 부분 Git 캐시, 압축 파일,
+도구 설치본과 빌드 산출물의 용량은 별도입니다.
+실제 다운로드·설치 후 측정한 크기입니다. 설치 크기는 파일 크기의 합계로,
+파일시스템 할당 단위에 따른 차이는 포함하지 않습니다.
+
+| 도구 | 압축 다운로드 | 설치 후 |
+|---|---:|---:|
+| Chromium LLVM | 약 50 MiB | 약 227 MiB |
+| 공통 Rust 도구 | 약 406 MiB | 약 2.39 GiB |
+| GN + Ninja | 약 1.5 MiB | 약 3.2 MiB |
+
+LLVM 자체보다 공통 Rust 도구가 더 큽니다. Visual Studio/Windows SDK 및 정적·동적
+빌드 산출물은 위 표에 포함하지 않습니다.
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-테스트는 CLI 설정 선택, 출력 분리, 환경 누락 보고, 기존 출력 보호, 소스/도구 변경
-감지, 명령 실패 전파를 검증합니다. GN과 빌드 실행 경계는 테스트 대역을 사용하므로
-이 테스트 통과를 실제 Chromium 빌드 성공으로 해석하면 안 됩니다.
+테스트는 선택 추출, Git 없는 소스 식별, 파일·도구 무결성, 덮어쓰기 방지,
+두 LLVM 설정과 출력 분리, 실패 전파를 검증합니다. GN/컴파일 경계의 단위 테스트는
+대역을 사용합니다. CI의 Linux 작업도 Python 테스트이며 Linux용 `base` 빌드가 아닙니다.
 
-## 소스 및 라이선스
+## 라이선스와 참고
 
-이 저장소의 빌드 도구는 루트 `LICENSE`를 따릅니다. 향후 가져올 Chromium 코드와
-제3자 의존성은 각각의 원본 라이선스를 유지해야 하며 루트 라이선스로 대체하지 않습니다.
-Chromium은 `base`의 외부 사용과 API/ABI 안정성을 보장하지 않습니다.
-[원본 base README](https://github.com/chromium/chromium/blob/main/base/README.md)
+자체 도구는 루트 `LICENSE`를 따릅니다. 가져온 Chromium과 제3자 코드는
+각각의 원본 라이선스를 유지하며 루트 라이선스로 대체하지 않습니다.
 
 - [구성 설계](docs/toolchain-design.md)
-- [구현 계획](docs/superpowers/plans/2026-10-27-dual-clang.md)
+- [공통 소스 구현 계획](docs/superpowers/plans/2026-10-28-standalone-source.md)
+- [Chromium base 안내](https://github.com/chromium/chromium/blob/main/base/README.md)
+- [외부 Clang 설정](https://chromium.googlesource.com/chromium/src/+/main/docs/clang.md#using-a-custom-clang-binary)

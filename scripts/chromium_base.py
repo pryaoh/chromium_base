@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit Windows LLVM selection for an existing Chromium checkout."""
+"""Build a shared standalone Chromium base snapshot with either LLVM toolchain."""
 
 import argparse
 import json
@@ -8,10 +8,11 @@ from pathlib import Path
 import platform
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
+from sync_source import INVENTORY, verify_snapshot
+from sync_tools import verify_installation
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -34,12 +35,14 @@ def make_plan(source, toolchain="external", llvm_root=None,
     if toolchain == "chromium":
         if llvm_root is not None:
             raise ValueError("--llvm-root is only valid with --toolchain external")
-        llvm = source / "third_party/llvm-build/Release+Asserts"
+        llvm = REPO_ROOT / ".tools/chromium-llvm"
     else:
         llvm = Path(llvm_root or os.environ.get("LLVM_ROOT") or
                     Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "LLVM").resolve()
     name = f"windows-x64-{toolchain}-{linkage}-{configuration}"
     output = source / "out" / "chromium-base" / name
+    rust_root = REPO_ROOT / ".tools/rust-toolchain"
+    rust_package = json.loads((REPO_ROOT / "tools.lock.json").read_text())["packages"]["rust-toolchain"]
     args = [
         'target_cpu = "x64"',
         "is_clang = true",
@@ -48,10 +51,14 @@ def make_plan(source, toolchain="external", llvm_root=None,
         "use_custom_libcxx = true",
         "is_debug = " + str(configuration == "debug").lower(),
         "is_component_build = " + str(linkage == "shared").lower(),
+        "clang_base_path = " + gn_string(llvm.as_posix()),
+        "rust_sysroot_absolute = " + gn_string(rust_root.as_posix()),
+        "rust_bindgen_root = " + gn_string(rust_root.as_posix()),
+        "rust_crubit_root = " + gn_string(rust_root.as_posix()),
+        "rustc_version = " + gn_string(rust_package["sha256"]),
     ]
     if toolchain == "external":
-        args += ["clang_base_path = " + gn_string(llvm.as_posix()),
-                 "clang_use_chrome_plugins = false"]
+        args += ["clang_use_chrome_plugins = false"]
     return {
         "source": str(source), "toolchain": toolchain, "llvm_root": str(llvm),
         "linkage": linkage, "configuration": configuration,
@@ -100,18 +107,27 @@ def windows_prerequisites():
     return info, errors
 
 
-def inspect_environment(plan, depot_tools=None, gn=None):
+def inspect_environment(plan, depot_tools=None, gn=None, ninja=None):
     source, llvm = Path(plan["source"]), Path(plan["llvm_root"])
     errors, warnings = [], []
-    for label, path in (("Chromium checkout", source), ("LLVM", llvm)):
+    for label, path in (("Chromium source", source), ("LLVM", llvm)):
         if re.search(r'[\s&|<>^%!"$();]', str(path)):
             errors.append(f"{label} path contains whitespace or shell metacharacters; upstream Windows rules require a simple path such as C:/src or C:/LLVM: {path}")
     identity, host_errors = windows_prerequisites()
     errors.extend(host_errors)
+    try:
+        identity["rust_toolchain"] = inspect_rust()
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        errors.append(f"Rust toolchain: {error}")
     required = (".gn", "DEPS", "base/BUILD.gn", "build/config/BUILDCONFIG.gn")
     missing = [name for name in required if not (source / name).is_file()]
     if missing:
-        errors.append("Synchronized Chromium src checkout missing: " + ", ".join(missing))
+        errors.append("Chromium source snapshot missing: " + ", ".join(missing))
+    elif (source / INVENTORY).is_file():
+        try:
+            identity.update(verify_snapshot(source))
+        except (OSError, ValueError, KeyError) as error:
+            errors.append(f"Invalid source snapshot: {error}")
     else:
         try:
             top = Path(capture(["git", "rev-parse", "--show-toplevel"], cwd=source)).resolve()
@@ -153,26 +169,35 @@ def inspect_environment(plan, depot_tools=None, gn=None):
             warnings.append("Checkout clang_version is conditional or dynamic; defer version compatibility to GN")
     if plan["toolchain"] == "external":
         warnings.append("Matching LLVM major versions is necessary here but does not prove compatibility with Chromium/libc++")
-    gn_path = Path(gn).resolve() if gn else source / "buildtools/win/gn.exe"
+    gn_path = Path(gn).resolve() if gn else REPO_ROOT / ".tools/gn/gn.exe"
     if not gn_path.is_file():
-        errors.append(f"GN missing: {gn_path}; synchronize the checkout or pass --gn")
+        errors.append(f"GN missing: {gn_path}; prepare the pinned tools or pass --gn")
     else:
         try:
             identity["gn_version"] = capture([str(gn_path), "--version"])
         except (OSError, subprocess.SubprocessError) as error:
             errors.append(f"Cannot execute GN: {error}")
     depot = depot_tools or os.environ.get("DEPOT_TOOLS")
-    if not depot:
-        found = shutil.which("gclient")
-        depot = str(Path(found).parent) if found else None
     depot = Path(depot).resolve() if depot else None
-    if depot is None or not (depot / "autoninja.py").is_file():
-        errors.append("depot_tools/autoninja.py missing; pass --depot-tools or set DEPOT_TOOLS")
+    ninja_path = Path(ninja).resolve() if ninja else REPO_ROOT / ".tools/ninja/ninja.exe"
+    if depot is not None and ninja is None:
+        if not (depot / "autoninja.py").is_file():
+            errors.append("depot_tools/autoninja.py missing; pass --ninja or a valid --depot-tools")
+        ninja_path = None
+    elif not ninja_path.is_file():
+        errors.append(f"Ninja missing: {ninja_path}; prepare the pinned tools or pass --ninja")
+    else:
+        try:
+            identity["ninja_version"] = capture([str(ninja_path), "--version"])
+        except (OSError, subprocess.SubprocessError) as error:
+            errors.append(f"Cannot execute Ninja: {error}")
     identity["gn_path"] = str(gn_path)
     identity["depot_tools"] = str(depot) if depot else None
-    warnings.append("GN checks exact SDK and dependency requirements; doctor does not prove all gclient dependencies are present")
+    identity["ninja_path"] = str(ninja_path) if ninja_path else None
+    warnings.append("GN checks exact SDK and dependency requirements; doctor does not prove dependency closure")
     return {"ok": not errors, "errors": errors, "warnings": warnings,
             "gn": str(gn_path), "depot_tools": str(depot) if depot else None,
+            "ninja": str(ninja_path) if ninja_path else None,
             "identity": identity}
 
 
@@ -180,11 +205,25 @@ def run_command(command, *, cwd, env):
     return subprocess.run(command, cwd=cwd, env=env, check=False).returncode
 
 
+def inspect_rust():
+    root = REPO_ROOT / ".tools/rust-toolchain"
+    package = json.loads((REPO_ROOT / "tools.lock.json").read_text())["packages"]["rust-toolchain"]
+    identity = verify_installation(root, package)
+    executable = root / "bin/rustc.exe"
+    if not executable.is_file():
+        raise ValueError(f"Missing Rust compiler: {executable}")
+    identity["rustc_version"] = capture([str(executable), "--version"])
+    return identity
+
+
 def build_environment(report):
     env = dict(os.environ)
     env["DEPOT_TOOLS_WIN_TOOLCHAIN"] = "0"
     env["DEPOT_TOOLS_UPDATE"] = "0"
-    env["PATH"] = str(report["depot_tools"]) + os.pathsep + env.get("PATH", "")
+    env["CHROMIUM_BASE_PYTHON"] = sys.executable
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    if report.get("depot_tools"):
+        env["PATH"] = str(report["depot_tools"]) + os.pathsep + env.get("PATH", "")
     return env
 
 
@@ -285,8 +324,9 @@ def build(plan, report):
     if manifest["state"] not in ("configured", "built", "build_failed"):
         raise ValueError("Run configure successfully before build")
     verify_generated_toolchain(plan)
-    command = [sys.executable, str(Path(report["depot_tools"]) / "autoninja.py"),
-               "-C", plan["output"], "base"]
+    command = ([report["ninja"]] if report.get("ninja") else
+               [sys.executable, str(Path(report["depot_tools"]) / "autoninja.py")])
+    command += ["-C", plan["output"], "base"]
     write_manifest(plan, report, "building")
     try:
         result = run_command(command, cwd=plan["source"], env=build_environment(report))
@@ -301,21 +341,22 @@ def build(plan, report):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("plan", "doctor", "configure", "build"))
-    parser.add_argument("--source", type=Path, default=REPO_ROOT / ".upstream/src",
-                        help="Synchronized Chromium src checkout")
+    parser.add_argument("--source", type=Path, default=REPO_ROOT / "vendor/chromium",
+                        help="Shared source snapshot produced by sync_source.py")
     parser.add_argument("--toolchain", choices=("external", "chromium"), default="external")
     parser.add_argument("--llvm-root", type=Path, help="External LLVM root; otherwise LLVM_ROOT or Program Files/LLVM")
     parser.add_argument("--linkage", choices=("static", "shared"), default="static")
     parser.add_argument("--configuration", choices=("release", "debug"), default="release")
     parser.add_argument("--depot-tools", type=Path, help="depot_tools directory containing autoninja.py")
-    parser.add_argument("--gn", type=Path, help="Override checkout's buildtools/win/gn.exe")
+    parser.add_argument("--gn", type=Path, help="Override .tools/gn/gn.exe")
+    parser.add_argument("--ninja", type=Path, help="Override .tools/ninja/ninja.exe; no depot_tools required")
     args = parser.parse_args(argv)
     try:
         plan = make_plan(args.source, args.toolchain, args.llvm_root, args.linkage, args.configuration)
         if args.command == "plan":
             print(json.dumps(plan, indent=2))
             return 0
-        report = inspect_environment(plan, args.depot_tools, args.gn)
+        report = inspect_environment(plan, args.depot_tools, args.gn, args.ninja)
         if args.command == "doctor":
             print(json.dumps(dict(plan=plan, **report), indent=2))
             return 0 if report["ok"] else 1

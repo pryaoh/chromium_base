@@ -9,8 +9,15 @@ libraries for Windows, macOS, and Linux. Start with Windows. The user selected
 a separately installed LLVM clang-cl as the default, with an explicit optional
 Chromium-provided clang-cl mode. Never silently fall back between them.
 
-This document covers the initial toolchain configuration, not a complete design
-for dependency extraction or library packaging.
+The source input is a standalone snapshot containing base and its required
+dependencies, shared by BOTH compiler modes. A full Chromium checkout is not a
+prerequisite. The 2026-10-27 driver's checkout-only assumption was an
+implementation gap, corrected by the user's clarification on 2026-10-28.
+
+Source synchronization has no compiler-mode option. One pinned source manifest
+selects upstream paths and dependency revisions. Compiler acquisition is separate:
+external LLVM is caller supplied; Chromium LLVM is a prebuilt package matching
+the pinned source revision. Static/shared outputs remain separate.
 
 ## Approaches
 
@@ -26,18 +33,19 @@ for dependency extraction or library packaging.
 - Keep upstream GN rules and use local builds, without remote execution.
 - Use clang-cl and lld-link from the selected LLVM installation; upstream uses
   `lld-link /lib` for static archives.
-- Native builds require checkout/LLVM paths without whitespace or shell
+- Native builds require source/LLVM paths without whitespace or shell
   metacharacters because upstream command construction does not quote all paths.
-- In Chromium mode, use the checkout's bundled LLVM and upstream plugin defaults.
+- In Chromium mode, use Chromium's matching prebuilt LLVM and upstream plugin defaults.
 - In external mode, explicitly select LLVM and disable Chromium plugins.
 - Use locally installed Visual Studio C++ tools and the Windows SDK.
 - Retain Chromium's pinned libc++ initially. Consumer examples must use the same
   standard library and compatible compile definitions and runtime configuration.
 - Separate output directories by compiler mode, linkage, and debug/release.
-- Record the exact LLVM version and Chromium commit after compatibility checks;
-  neither has been selected or validated yet.
-- Later macOS/Linux builds will use external Clang with platform-specific SDKs
-  and configuration. Windows binaries are not portable across operating systems.
+- Pin source SHA `1633b610f5957ddd13a26fe87628c0768067e740` and its dependency
+  revisions. Its toolchain config requires Clang 24. Chromium LLVM and the shared
+  Rust tools are separately downloaded binaries with locked SHA-256 checksums.
+- Both compiler modes share this source model on Windows, macOS, and Linux.
+  Native macOS/Linux build verification is deferred; Windows is the first target.
 
 These defaults are recommendations, not additional user requirements.
 
@@ -73,11 +81,11 @@ configuration alone constitutes a self-contained distribution package.
 
 ## Acceptance and next implementation
 
-Implementation scope for this step: a Windows build driver with plan, doctor,
-configure, and build commands for an existing synchronized Chromium checkout.
-The machine has approximately 25 GiB free and no detected LLVM or Chromium
-checkout. Downloading a full checkout and proving actual base compilation remain
-environment-dependent follow-up work. Do not equate driver tests with a base build.
+The first driver supported only an existing full checkout; that is not the
+intended final design. Replace this prerequisite with selective source extraction,
+explicit provenance, a small standalone GN entry point, and separately acquired
+build tools. No full checkout or Chrome/browser sources are required by design.
+Do not equate source synchronization or driver tests with a successful native build.
 
 1. Detect the caller-supplied LLVM installation, Visual Studio C++ components,
    and SDK; report missing tools without changing the machine automatically.
@@ -89,6 +97,18 @@ environment-dependent follow-up work. Do not equate driver tests with a base bui
 
 Library builds and ABI compatibility have not been validated. Broad MSVC STL
 consumer compatibility and a stable C ABI are not promised by this configuration.
+
+## Implementation evidence on 2026-10-28
+
+- Selective extraction produced a Git-independent source tree; neither compiler
+  mode requires a complete Chromium working tree.
+- `source.lock.json` has no compiler mode. Both modes default to `vendor/chromium`.
+- Native GN was executed with the pinned Chromium LLVM. It entered `base/BUILD.gn`
+  and failed in `build/toolchain/win/setup_toolchain.py` because the required SDK
+  `10.0.28000.0` include directory is absent. Dependency closure and library builds
+  remain unverified until this prerequisite and any subsequent GN errors are resolved.
+- LLVM, GN, Ninja and Rust live outside the source snapshot. Rust package identity
+  is checked against the lock rather than inferred from a version label alone.
 
 ## References
 

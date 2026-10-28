@@ -1,4 +1,5 @@
 import json
+import os
 import contextlib
 import io
 from pathlib import Path
@@ -10,6 +11,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import chromium_base as driver
+import sync_source
+import sync_tools
+import zipfile
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "chromium_base.py"
@@ -43,10 +47,10 @@ class PlanTests(unittest.TestCase):
         self.assertFalse(self.source.exists())
         self.assertFalse(self.llvm.exists())
 
-    def test_chromium_uses_checkout_and_leaves_plugin_defaults(self):
+    def test_chromium_uses_separate_tools_and_leaves_plugin_defaults(self):
         result = self.plan("--toolchain", "chromium")
-        self.assertEqual(Path(result["llvm_root"]), self.source / "third_party/llvm-build/Release+Asserts")
-        self.assertNotIn("clang_base_path", result["gn_args"])
+        self.assertEqual(Path(result["llvm_root"]), driver.REPO_ROOT / ".tools/chromium-llvm")
+        self.assertIn("clang_base_path", result["gn_args"])
         self.assertNotIn("clang_use_chrome_plugins", result["gn_args"])
         self.assertIn("use_custom_libcxx = true", result["gn_args"])
 
@@ -72,6 +76,9 @@ class PlanTests(unittest.TestCase):
 
 class ExecutionTests(unittest.TestCase):
     def setUp(self):
+        rust = patch.object(driver, "inspect_rust", return_value={"archive_sha256": "fixture"})
+        rust.start()
+        self.addCleanup(rust.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -190,7 +197,7 @@ class ExecutionTests(unittest.TestCase):
         self.output = Path(self.plan["output"])
         def generate(command, **kwargs):
             self.successful_gn(command, **kwargs)
-            relative = "../../../third_party/llvm-build/Release+Asserts/bin"
+            relative = os.path.relpath(Path(self.plan["llvm_root"]) / "bin", self.output).replace("\\", "/")
             (self.output / "toolchain.ninja").write_text(
                 f"command = {relative}/clang-cl.exe\ncommand = {relative}/lld-link.exe\n", encoding="utf-8")
             return 0
@@ -247,12 +254,41 @@ class ExecutionTests(unittest.TestCase):
             if "lld-link" in command[0]:
                 return "LLD 23.1.0"
             return "2400"
-        with patch.object(driver, "capture", side_effect=capture), patch.object(driver, "windows_prerequisites", return_value=({}, [])):
+        with patch.object(driver, "capture", side_effect=capture), patch.object(driver, "windows_prerequisites", return_value=({}, [])), patch.object(driver, "inspect_rust", return_value={"archive_sha256": "fixture"}):
             return driver.inspect_environment(self.plan, depot, gn)
 
     def test_doctor_accepts_upstream_lld_librarian_without_llvm_lib(self):
         report = self.ready_doctor_report()
         self.assertTrue(report["ok"], report["errors"])
+
+    def test_both_modes_use_the_same_gitless_source_identity(self):
+        source = self.root / "snapshot"
+        for name in (".gn", "DEPS", "base/BUILD.gn", "build/config/BUILDCONFIG.gn"):
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+        sync_source.write_inventory(source, {"schema": 1, "repositories": [{"revision": "a" * 40}]})
+        identities = []
+        for mode in ("external", "chromium"):
+            plan = driver.make_plan(source, toolchain=mode)
+            def no_git(command, **kwargs):
+                self.assertNotEqual(command[0], "git")
+                return "clang version 24.0.0"
+            with patch.object(driver, "capture", side_effect=no_git), patch.object(driver, "windows_prerequisites", return_value=({}, [])):
+                report = driver.inspect_environment(plan, gn=self.root / "absent-gn", ninja=self.root / "absent-ninja")
+            identities.append({k: report["identity"][k] for k in ("revision", "source_inventory_sha256", "source_files")})
+        self.assertEqual(identities[0], identities[1])
+        (source / "base/BUILD.gn").write_text("modified")
+        report = driver.inspect_environment(plan, gn=self.root / "absent-gn", ninja=self.root / "absent-ninja")
+        self.assertIn("modified", "\n".join(report["errors"]))
+
+    def test_direct_ninja_build_needs_no_depot_tools(self):
+        self.report["ninja"] = str(self.root / "ninja.exe")
+        self.report["depot_tools"] = None
+        self.configure_success()
+        with patch.object(driver, "run_command", return_value=0) as run:
+            driver.build(self.plan, self.report)
+        self.assertEqual(run.call_args.args[0], [self.report["ninja"], "-C", str(self.output), "base"])
 
     def test_doctor_explains_upstream_unquoted_llvm_path_limit(self):
         with patch.object(driver, "windows_prerequisites", return_value=({}, [])):
@@ -289,6 +325,26 @@ class ExecutionTests(unittest.TestCase):
                     f"command = {root}/clang-cl.exe{suffix}\ncommand = {root}/lld-link.exe{suffix}\n", encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "toolchain.ninja"):
                     driver.verify_generated_toolchain(self.plan)
+
+
+class RustIdentityTests(unittest.TestCase):
+    def test_locked_rust_package_must_match_installed_payload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "rust.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr("bin/rustc.exe", b"fixture")
+            package = {"archive": "rust.zip", "url": "https://example.invalid/rust.zip", "sha256": sync_source.sha256(archive)}
+            lock = {"packages": {"rust-toolchain": package}}
+            (root / "tools.lock.json").write_text(json.dumps(lock))
+            sync_tools.install("rust-toolchain", package, root, root / ".tools")
+            with patch.object(driver, "REPO_ROOT", root), patch.object(driver, "capture", return_value="rustc fixture"):
+                identity = driver.inspect_rust()
+                self.assertEqual(identity["archive_sha256"], package["sha256"])
+                package["sha256"] = "0" * 64
+                (root / "tools.lock.json").write_text(json.dumps(lock))
+                with self.assertRaisesRegex(ValueError, "different"):
+                    driver.inspect_rust()
 
 
 if __name__ == "__main__":

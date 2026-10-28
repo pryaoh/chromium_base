@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "platform": "windows-x64",
+  "packages": {
+    "gn": {
+      "url": "https://chrome-infra-packages.appspot.com/dl/gn/gn/windows-amd64/+/git_revision:84f10d13f9041068a7da8f9dfc9b991e1049823a",
+      "sha256": "6fae6d7f0deed870ad73c882cd960b9b74c1657050cab701ddb5b3f90416cc20",
+      "archive": "gn.zip"
+    },
+    "ninja": {
+      "url": "https://chrome-infra-packages.appspot.com/dl/infra/3pp/tools/ninja/windows-amd64/+/version:3@1.12.1.chromium.4",
+      "sha256": "0cf1cb1b9d2b8d2d14a9fd38b984f17dd853115db682880b21ceee45e91deb50",
+      "archive": "ninja.zip"
+    },
+    "chromium-llvm": {
+      "url": "https://commondatastorage.googleapis.com/chromium-browser-clang/Win/clang-llvmorg-24-init-14453-ge063be79-1.tar.xz",
+      "sha256": "08abce6e1d01c2fff9b25a09e36d9976296f27842196f96411b8220364481818",
+      "archive": "clang.tar.xz"
+    },
+    "rust-toolchain": {
+      "url": "https://commondatastorage.googleapis.com/chromium-browser-clang/Win/rust-toolchain-8a9dd7abdf013ec10cfeaaa3685feba18ef1c90c-1-llvmorg-24-init-14453-ge063be79.tar.xz",
+      "sha256": "8d501e922bc40c4e3bb255e8e31783c027054bff27b17970150c399c80eaf647",
+      "archive": "rust.tar.xz"
+    }
+  }
+}
