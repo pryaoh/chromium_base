@@ -11,9 +11,9 @@ Chromium `base`와 필요한 의존성을 선택 추출하여 독립 라이브�
 Ninja 입력 검사는 2,346개 작업을 통과했습니다. 동적 구성도 GN 생성(856개 타깃)과
 Ninja 입력 검사(2,275개 작업)를 통과했습니다.
 검증 산출물은 `vendor/chromium/out/dependency-audit/obj/base/base.lib`입니다.
-이는 객체 파일을 참조하는 thin archive이므로, 배포용으로 쓰려면 일반 정적 라이브러리와
-전이 의존성을 묶는 패키징이 필요합니다. DLL 링크와 외부 LLVM의 실제 빌드는 미검증입니다.
-배포용 SDK/CMake 패키지와 소비 프로그램, macOS/Linux 네이티브 빌드는 후속 작업입니다.
+원본은 객체 파일을 참조하는 thin archive이며, SDK 내보내기는 이를 일반 archive로 바꾸고
+헤더·의존성을 묶습니다. **SDK를 다른 경로로 옮긴 외부 CMake 소비자의 빌드와 실행도 성공**했습니다.
+DLL 링크, 외부 LLVM의 실제 빌드, macOS/Linux 네이티브 빌드와 사용자용 sample은 후속 작업입니다.
 
 ## 구조
 
@@ -95,8 +95,7 @@ Visual Studio C++ 데스크톱 도구와 선택한 커밋이 요구하는 SDK가
 SDK 도구 버전은 10.0.28000.2526이며 x86·x64·ARM64 라이브러리와 리소스 컴파일러,
 UWP 헤더 및 x64 디버깅 도구를 확인했습니다. 실행 중인 VS를 유지하기 위해 사용자 승인하에
 Microsoft의 SDK 독립 설치 프로그램을 사용했으며 재부팅은 필요하지 않았습니다.
-현재 남은 오류는 SDK가 아닌 추출본의 GN 의존성 누락입니다.
-이 의존성 보완과 후속 검증이 완료되어야 아래 빌드가 성공할 수 있습니다.
+필수 GN 의존성은 보완했으며 Chromium LLVM 정적 빌드가 성공했습니다.
 드라이버는 시스템 구성 요소를 자동 설치하지 않습니다.
 
 ```powershell
@@ -129,6 +128,100 @@ VS/SDK 정보와 실행 상태를 기록합니다. 환경이 달라지거나 `ar
 생성 헤더, 시스템 링크 옵션, DLL 및 import library 등을 포함한 패키징과 소비자 검증이
 추가로 필요합니다. 소비 프로그램도 같은 표준 라이브러리와 호환되는 설정을 사용해야 합니다.
 
+## 정적 SDK와 CMake 연결
+
+`scripts/export_sdk.py`는 성공한 **Windows x64 / static / Release / libc++** 빌드에서
+SDK를 만듭니다. 원본 소스나 빌드의 `args.gn`은 수정하지 않습니다. 별도의 GN 소비 타깃에서
+공개 include·define·옵션을 얻고, Ninja의 실제 링크 입력으로 전이 의존성을 수집합니다.
+버전별 라이브러리 이름 목록을 별도로 관리하지 않습니다.
+
+```powershell
+# 먼저 Chromium LLVM 정적 Release를 빌드한 경우
+python scripts/export_sdk.py `
+  --toolchain chromium `
+  --build-dir vendor/chromium/out/chromium-base/windows-x64-chromium-static-release `
+  --destination out/sdk/windows-x64-chromium-static-release
+
+# 이 PC의 기존 검증 빌드(dependency-audit)는 드라이버 manifest 생성 이전의 산출물입니다.
+# 이를 사용할 때만 명시적으로 --allow-unmanaged-build를 전달합니다.
+python scripts/export_sdk.py `
+  --toolchain chromium --allow-unmanaged-build `
+  --build-dir vendor/chromium/out/dependency-audit `
+  --destination out/sdk/from-audited-build
+```
+
+일반 사용에서는 빌드 드라이버의 성공 manifest와 소스·도구 식별값을 검사합니다.
+`--allow-unmanaged-build`는 이 manifest 검사를 생략하므로 빌드 이력을 직접 관리하는
+기존 산출물에만 사용하세요. 이 경우에도 소스 무결성·GN 인자·선택 LLVM 경로를 검사하고
+Ninja로 `base`를 갱신합니다. 현재 내보내기는 direct Ninja 빌드를 대상으로 하며,
+`autoninja`로 구성한 빌드는 드라이버의 `--ninja` 옵션으로 별도 구성해야 합니다.
+
+패키지 내용:
+
+- `include/source`, `include/generated`: 공개 헤더, 생성 헤더, 고정 libc++ 헤더와 설정.
+- `lib`: 일반 `.lib`/`.rlib` 및 직접 연결할 `.obj`. thin archive는 원래 Ninja 객체 목록으로
+  재생성합니다. 현재 LLVM의 thin 입력 재포장 오류를 피하며, 직접 연결 객체의 의미도 유지합니다.
+- `lib/cmake/ChromiumBase`: `ChromiumBase::base`와 LLVM toolchain 파일.
+- `licenses`, `sdk-manifest.json`, `files.sha256.json`: 의존성 라이선스, 출처·설정·무결성 정보.
+
+기존 SDK 경로는 덮어쓰지 않습니다. 새 경로에 생성한 뒤 검증하여 교체하세요.
+실패한 `*.staging-*` 디렉터리는 진단용으로 남고 완료된 SDK로 게시되지 않습니다.
+출처 manifest의 원래 경로는 이력용이며, CMake 사용 경로는 SDK 위치를 기준으로 계산합니다.
+Windows SDK/Visual Studio 라이브러리는 재배포하지 않으므로 소비 PC에도 설치해야 합니다.
+
+소비 프로젝트의 `CMakeLists.txt`:
+
+```cmake
+cmake_minimum_required(VERSION 3.25)
+project(my_app LANGUAGES CXX)
+find_package(ChromiumBase CONFIG REQUIRED)
+add_executable(my_app main.cc)
+target_link_libraries(my_app PRIVATE ChromiumBase::base)
+```
+
+**x64 Visual Studio Developer PowerShell**에서 아래와 같이 구성합니다.
+
+```powershell
+$sdk = 'C:/sdk/chromium-base' # 내보낸 SDK는 다른 경로로 옮겨도 됩니다.
+cmake -S . -B build -G Ninja `
+  "-DCMAKE_PREFIX_PATH=$sdk" `
+  "-DCMAKE_TOOLCHAIN_FILE=$sdk/lib/cmake/ChromiumBase/chromium-base-toolchain.cmake" `
+  -DCHROMIUM_BASE_LLVM_ROOT=C:/tools/chromium-llvm `
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+LLVM은 SDK를 빌드한 것과 동일한 `clang-cl`/`lld-link`를 사용해야 합니다. CMake 구성 시
+실행 파일의 SHA-256을 확인하며 CRT는 `/MT`, 표준 라이브러리는 동봉한 libc++를 사용합니다.
+Debug·DLL·다중 구성 generator·추가 sanitizer 설정은 현재 내보내기 범위에 포함되지 않습니다.
+초기 패키지의 컴파일 옵션은 C++ 소비 타깃을 대상으로 합니다. C 소스는 별도 타깃으로 분리하고,
+C/C++ 혼합 타깃에 이 C++ 옵션을 그대로 전달하지 마세요.
+외부 LLVM 모드에도 같은 내보내기 경로를 사용하지만 해당 LLVM으로 먼저 빌드하고 별도로 검증해야 합니다.
+
+`tests/sdk_consumer`와 `tests/verify_sdk.py`는 문자열·JSON·파일·태스크 실행 및 정적 라이브러리를
+포함한 외부 연결 검증용입니다. Ninja의 실제 헤더 의존성을 검사해 원본 소스/빌드 경로 참조와
+동봉 libc++·생성 헤더 사용 여부를 확인합니다. 사용자용 sample 프로젝트는 별도 후속 작업입니다.
+
+이 PC에서 검증된 SDK는 `out/sdk/relocated sdk/windows-x64-chromium-static-release`입니다.
+파일 크기 합계는 약 **399 MiB**(10,017개 파일)이며 원본 빌드·도구·캐시 용량은 별도입니다.
+일반 archive 121개(`.lib` 95개, `.rlib` 26개)와 직접 연결 객체 458개를 포함합니다.
+공백이 있는 경로로 옮긴 뒤 소비자 정적 라이브러리·실행 파일의 컴파일, 링크, 실행을 통과했고,
+실제 헤더 의존성 2,315건에 원래 Chromium 소스/빌드 경로가 없음을 확인했습니다.
+서로 다른 CMake 하위 디렉터리에서 `find_package`를 각각 호출하는 경우도 검증했습니다.
+CMake는 4.3으로 검증했습니다. 전체 Python 단위 테스트는 53개가 통과했습니다.
+
+검증 재실행 예시(새 `--work` 경로 필요):
+
+```powershell
+python tests/verify_sdk.py `
+  --sdk 'out/sdk/relocated sdk/windows-x64-chromium-static-release' `
+  --llvm-root .tools/chromium-llvm --cmake cmake --ninja .tools/ninja/ninja.exe `
+  --work out/sdk-consumer-check
+```
+
+위 명령은 x64 VS Developer 환경에서 실행합니다. 이 PC의 GN 환경을 재사용하려면
+`--environment-file vendor/chromium/out/dependency-audit/environment.x64`를 추가할 수 있습니다.
+
 ## 용량과 검증 범위
 
 현재 실제 선택 추출본은 34,706개 파일, 약 360 MiB입니다.
@@ -151,7 +244,7 @@ python -m unittest discover -s tests -v
 ```
 
 테스트는 선택 추출, Git 없는 소스 식별, 파일·도구 무결성, 덮어쓰기 방지,
-두 LLVM 설정과 출력 분리, 실패 전파를 검증합니다. GN/컴파일 경계의 단위 테스트는
+두 LLVM 설정과 출력 분리, 실패 전파, SDK 명령 해석과 경로 처리를 검증합니다. GN/컴파일 경계의 단위 테스트는
 대역을 사용합니다. CI의 Linux 작업도 Python 테스트이며 Linux용 `base` 빌드가 아닙니다.
 
 ## 라이선스와 참고
