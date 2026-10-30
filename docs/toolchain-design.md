@@ -51,9 +51,9 @@ These defaults are recommendations, not additional user requirements.
 
 ## GN configuration shape
 
-The following is a proposed configuration, not a tested build recipe. The LLVM
-path must be supplied by the caller and validated; this example path does not
-currently contain a detected LLVM installation.
+The following configuration shape has been verified through the build driver.
+The LLVM path must be supplied by the caller and validated; `C:/LLVM` is a
+placeholder, while the tested external installation is `.tools/external-llvm`.
 
 ```gn
 target_cpu = "x64"
@@ -96,9 +96,8 @@ Do not equate source synchronization or driver tests with a successful native bu
    headers and libraries outside the Chromium source tree.
 
 Windows x64 Chromium LLVM static/shared builds, packaging and external consumers
-have passed. Upstream LLVM 24 shared builds and consumers have also passed; its
-static validation is in progress. Broad MSVC STL compatibility and a stable C ABI
-are not promised.
+have passed. Upstream LLVM 24 static/shared builds and consumers have also passed.
+Broad MSVC STL compatibility and a stable C ABI are not promised.
 
 ## Implementation evidence on 2026-10-28
 
@@ -143,9 +142,12 @@ are not promised.
   upstream source patches. Relocated SDK fixture and hello_base sample passed;
   2,307 header dependencies contain no original source/build references. Both
   isolated shared deployments passed, including the missing-DLL negative check.
-- External static compilation was interrupted after 834/2,346 jobs. No compiler
-  process remained on resumption; source/tool identity checks and managed configure
-  are repeated before Ninja resumes existing outputs. Final result is pending.
+- External static compilation was interrupted after 834/2,346 jobs. After checking
+  that no build processes remained, source/tool identity checks and managed
+  configure passed, and Ninja completed the remaining 1,512 jobs. The relocated
+  static SDK fixture and sample passed; 2,315 header dependencies were audited.
+  Both executables also ran from separate folders with only system PATH entries,
+  and PE imports contain no Chromium runtime DLLs.
 - Full Python regression suite: 59 tests passed before incremental commits.
 
 ## References

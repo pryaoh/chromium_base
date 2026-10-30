@@ -9,8 +9,8 @@
 
 ## 전체 샘플 빌드
 
-현재 검증 범위는 **Windows x64 / static·shared Release / Chromium LLVM** 및
-**외부 LLVM 24 개발 빌드 / shared Release**입니다. 외부 LLVM 정적 구성은 검증 중입니다.
+현재 검증 범위는 **Windows x64 / static·shared Release**이며,
+**Chromium LLVM과 외부 LLVM 24 개발 빌드 모두** 컴파일·링크·실행을 통과했습니다.
 SDK를 빌드했던 것과 동일한 LLVM, Visual Studio C++ 도구, Windows SDK 및 CMake 3.25 이상이 필요합니다.
 **x64 Visual Studio Developer PowerShell**에서 저장소 루트를 기준으로 실행하세요.
 `cmake`는 PATH에 있어야 하며 SDK를 다른 위치에 두었다면 `$sdk`를 변경합니다.
@@ -98,6 +98,14 @@ $llvm = (Resolve-Path '.tools/external-llvm').Path
 
 검증한 외부 컴파일러는 LLVM 공식 `24.0.0git`, 커밋
 `6dc0e52d1e7f7ebef472d00b7e4b1e8c8cba146f`입니다. SDK와 샘플은 동일한 LLVM을 사용해야 합니다.
+
+외부 LLVM 정적 SDK는 `out/sdk/relocated sdk/windows-x64-external-static-release`를 사용하고,
+샘플 빌드 경로는 `out/samples-external-static`으로 분리합니다.
+정적 샘플은 Chromium 런타임 DLL 없이 별도 디렉터리에서 실행되는 것도 검증했습니다.
+
+```powershell
+& ./out/samples-external-static/bin/hello_base.exe --name=LLVM
+```
 
 ## 샘플 추가
 

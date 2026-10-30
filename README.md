@@ -16,8 +16,8 @@ Chromium `base`와 필요한 의존성을 선택 추출하여 독립 라이브�
 헤더·의존성을 묶습니다. **SDK를 다른 경로로 옮긴 외부 CMake 소비자의 빌드와 실행도 성공**했습니다.
 실행 가능한 첫 샘플은 [samples/hello_base](samples/README.md)에 있습니다.
 DLL 19개를 배치한 별도 폴더에서 시스템 경로만 사용한 실행도 검증했습니다.
-외부 LLVM 24 개발 빌드의 **동적 빌드·SDK·샘플·DLL 배포 실행도 검증**했습니다.
-외부 LLVM 정적 빌드는 검증 중이며, Debug와 macOS/Linux 네이티브 빌드는 아직 검증하지 않았습니다.
+외부 LLVM 24 개발 빌드도 **정적·동적 빌드, SDK와 샘플 실행을 모두 검증**했습니다.
+Debug와 macOS/Linux 네이티브 빌드는 아직 검증하지 않았습니다.
 
 ## 구조
 
@@ -274,7 +274,12 @@ SDK는 `out/sdk/relocated sdk/windows-x64-external-shared-release`,
 샘플은 `out/samples-external-shared/bin/hello_base.exe`입니다.
 외부 소비자의 헤더 의존성 2,307건에 원본 소스/빌드 경로 참조가 없고,
 샘플과 소비자 모두 DLL 19개를 별도 배치한 실행 및 누락 DLL 실패 검사를 통과했습니다.
-정적 구성 `vendor/chromium/out/es`는 중단된 빌드를 재개하여 검증 중입니다.
+정적 구성 `vendor/chromium/out/es`도 전체 빌드를 완료했습니다.
+정적 SDK는 `out/sdk/relocated sdk/windows-x64-external-static-release`,
+샘플은 `out/samples-external-static/bin/hello_base.exe`입니다.
+소비자의 헤더 의존성 2,315건을 검사했으며, 샘플·소비자 모두 Chromium 런타임 DLL을
+가져오지 않고 별도 폴더에서 시스템 PATH만 사용한 실행에 성공했습니다.
+정적 SDK는 약 399 MiB(10,020개 파일), 동적 SDK는 약 121 MiB(9,470개 파일)입니다.
 이 결과는 위 개발 빌드에 대한 것이며 다른 LLVM 버전의 호환성을 보장하지 않습니다.
 
 ```powershell
@@ -282,6 +287,10 @@ python scripts/chromium_base.py configure --toolchain external --llvm-root .tool
 python scripts/chromium_base.py build --toolchain external --llvm-root .tools/external-llvm --linkage shared --output-dir vendor/chromium/out/eh
 python scripts/export_sdk.py --toolchain external --linkage shared --build-dir vendor/chromium/out/eh --destination out/sdk/windows-x64-external-shared-release
 ```
+
+정적 구성은 `--linkage static`과 `--output-dir vendor/chromium/out/es`를 사용합니다.
+내보낼 때는 `--build-dir vendor/chromium/out/es`와 새로운 static SDK 목적지를 지정합니다.
+동적·정적 SDK를 바꿀 때는 샘플의 CMake 빌드 디렉터리도 분리하세요.
 
 외부 LLVM 설치본은 약 3.65 GiB입니다. 공식 아티팩트 ZIP(약 1.54 GiB)과
 그 안에서 꺼낸 tar.xz(약 751 MiB)는 `.cache/external`에 별도 보관되어 있습니다.
