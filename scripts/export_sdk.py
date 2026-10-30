@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export a built Windows x64 static Release base as a relocatable CMake SDK."""
+"""Export a built Windows x64 static/shared Release base as a relocatable CMake SDK."""
 
 import argparse
 import json
@@ -12,7 +12,7 @@ import tempfile
 import uuid
 
 from sdk_metadata import (consumer_flags, expanded_command, link_contract,
-                          parse_args, validate_configuration)
+                          parse_args, runtime_contract, validate_configuration)
 from sync_source import INVENTORY, regular_files, sha256, verify_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +64,29 @@ def compdb(ninja, build, rule, expanded=False):
     return {item['output']: item for item in entries}
 
 
+def runtime_files(entries, build):
+    """Validate GN's runtime list before flattening DLLs beside an executable."""
+    build = Path(build).resolve()
+    result, names = [], {}
+    for entry in entries:
+        path = contained(build / entry, build)
+        if path == build / 'consumer.exe':
+            continue
+        if path.suffix.lower() == '.pdb':
+            continue  # Debug symbols are not required to load or run a DLL.
+        if path.suffix.lower() != '.dll':
+            raise ValueError('Unsupported GN runtime dependency: ' + entry)
+        if not path.is_file():
+            raise FileNotFoundError('Missing GN runtime dependency: ' + str(path))
+        key = path.name.lower()
+        if key in names and names[key] != path:
+            raise ValueError('Runtime DLL filename collision: ' + path.name)
+        if key not in names:
+            names[key] = path
+            result.append(path)
+    return result
+
+
 def materialize(source, destination, members, linker, build):
     """Re-create thin archives from their Ninja inputs; never read thin with lld /lib."""
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -95,7 +118,8 @@ def discover(source, build, gn, ninja, env):
     work.mkdir(parents=True)
     label = '//' + work.relative_to(source).as_posix() + ':consumer'
     (work / 'BUILD.gn').write_text('executable("consumer") {\n'
-                                  '  sources = [ "probe.cc" ]\n  deps = [ "//base" ]\n}\n')
+                                  '  sources = [ "probe.cc" ]\n  deps = [ "//base" ]\n'
+                                  '  write_runtime_deps = "$root_out_dir/consumer.runtime_deps"\n}\n')
     (work / 'probe.cc').write_text('int main() { return 0; }\n')
     meta = work / 'meta'
     meta.mkdir()
@@ -103,14 +127,25 @@ def discover(source, build, gn, ninja, env):
     print('Generating GN consumer metadata...', flush=True)
     run([gn, 'gen', meta, '--root-target=' + label, '--root-pattern=' + label,
          '--ide=json', '--fail-on-unused-args'], cwd=source, env=env)
-    target = json.loads((meta / 'project.json').read_text())['targets'][label]
+    targets = json.loads((meta / 'project.json').read_text())['targets']
+    target = targets[label]
+    outputs = []
+    for node in targets.values():
+        for value in node.get('outputs', []):
+            if value.startswith('//') and value.lower().endswith('.lib'):
+                path = source / value[2:]
+                if path.is_relative_to(meta):
+                    outputs.append(path.relative_to(meta).as_posix())
     raw = compdb(ninja, meta, 'link')['consumer.exe']
     expanded = compdb(ninja, meta, 'link', True)['consumer.exe']
-    contract = link_contract(expanded_command(raw['command'], expanded['command']), [raw['file']])
+    contract = link_contract(expanded_command(raw['command'], expanded['command']), [raw['file']], outputs)
+    contract['runtime_deps'] = (meta / 'consumer.runtime_deps').read_text().splitlines()
     return meta, target, contract
 
 
-def package_config(stage, includes, flags, defines, contract, inputs, compiler_hash, linker_hash):
+def package_config(stage, includes, flags, defines, contract, inputs, compiler_hash, linker_hash,
+                   linkage='static', runtime=()):
+    crt = runtime_contract(flags, defines, linkage)
     directory = stage / 'lib/cmake/ChromiumBase'
     directory.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -133,8 +168,8 @@ def package_config(stage, includes, flags, defines, contract, inputs, compiler_h
         f'if(NOT _cb_linker_hash STREQUAL "{linker_hash}")',
         '  message(FATAL_ERROR "Use the exact LLVM linker used to export this SDK")',
         'endif()',
-        'if(NOT CMAKE_MSVC_RUNTIME_LIBRARY STREQUAL "MultiThreaded")',
-        '  message(FATAL_ERROR "ChromiumBase SDK requires the static Release CRT (/MT)")',
+        f'if(NOT CMAKE_MSVC_RUNTIME_LIBRARY STREQUAL "{crt}")',
+        f'  message(FATAL_ERROR "ChromiumBase {linkage} SDK requires CRT {crt}")',
         'endif()',
         'get_filename_component(_cb_root "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)',
         'add_library(ChromiumBase::base INTERFACE IMPORTED GLOBAL)',
@@ -154,12 +189,16 @@ def package_config(stage, includes, flags, defines, contract, inputs, compiler_h
     prop('INTERFACE_COMPILE_DEFINITIONS', defines)
     prop('INTERFACE_LINK_OPTIONS', list(dict.fromkeys(contract['options'])))
     prop('INTERFACE_LINK_LIBRARIES', inputs, True)
+    prop('CHROMIUM_BASE_RUNTIME_FILES', runtime, True)
     lines.append('set_property(TARGET ChromiumBase::base APPEND PROPERTY INTERFACE_LINK_LIBRARIES')
     lines.extend('  ' + cmake_quote(lib) for lib in contract['system_libs'])
-    lines += [')', 'unset(_cb_root)', 'unset(_cb_compiler_hash)', 'unset(_cb_linker_hash)', '']
+    lines += [')', 'include("${CMAKE_CURRENT_LIST_DIR}/chromium-base-deploy.cmake")',
+              'unset(_cb_root)', 'unset(_cb_compiler_hash)', 'unset(_cb_linker_hash)', '']
     (directory / 'ChromiumBaseConfig.cmake').write_text('\n'.join(lines), encoding='utf-8')
-    for name in ('chromium-base-toolchain.cmake', 'chromium-base-rules.cmake'):
+    for name in ('chromium-base-toolchain.cmake', 'chromium-base-rules.cmake', 'chromium-base-deploy.cmake'):
         shutil.copy2(ROOT / 'cmake' / name, directory / name)
+    (directory / 'chromium-base-runtime.cmake').write_text(
+        f'set(CMAKE_MSVC_RUNTIME_LIBRARY {crt})\n', encoding='utf-8')
 
 
 def export(args):
@@ -167,7 +206,8 @@ def export(args):
     contained(build, source / 'out')
     args_text = (build / 'args.gn').read_text(encoding='utf-8')
     settings = parse_args(args_text)
-    validate_configuration(settings)
+    linkage = getattr(args, 'linkage', 'static')
+    validate_configuration(settings, linkage)
     llvm = Path(settings['clang_base_path']).resolve()
     check_destination(dest, [source, llvm, ROOT / '.tools'])
     # Managed builds must already have a successful build manifest. The older audited
@@ -186,7 +226,8 @@ def export(args):
         # The build driver validates the full manifest; do not weaken its ownership checks.
         from chromium_base import make_plan, read_manifest
         plan = make_plan(source, args.toolchain,
-                         str(llvm) if args.toolchain == 'external' else None)
+                         str(llvm) if args.toolchain == 'external' else None, linkage=linkage,
+                         output_dir=build)
         if Path(plan['output']).resolve() != build:
             raise ValueError('Build path does not match selected toolchain')
         # read_manifest also needs the original environment identity.
@@ -211,6 +252,7 @@ def export(args):
     full_ar = compdb(args.ninja, build, 'alink', True)
     flags, extra_includes = consumer_flags(target['cflags'] + target['cflags_cc'])
     defines = [d for d in target['defines'] if d != 'USE_LIBCXX_MODULES']
+    runtime_contract(flags, defines, linkage)
     if any(d.startswith(('BASE_IMPLEMENTATION', 'IS_RAW_PTR_IMPL')) for d in defines):
         raise ValueError('Implementation defines leaked into consumer configuration')
     include_paths = []
@@ -288,7 +330,18 @@ def export(args):
         if not (stage / relative).is_dir():
             raise ValueError('Exported include directory missing: ' + relative)
     compiler_hash = sha256(clang)
-    package_config(stage, includes, flags, defines, contract, inputs, compiler_hash, sha256(linker))
+    runtime = []
+    if linkage == 'shared':
+        for path in runtime_files(contract['runtime_deps'], build):
+            output = stage / 'bin' / path.name
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, output)
+            runtime.append(output.relative_to(stage).as_posix())
+            artifacts.append(dict(path=runtime[-1], source_sha256=sha256(path), sha256=sha256(output)))
+        if not runtime:
+            raise ValueError('Shared SDK has no GN runtime DLLs')
+    package_config(stage, includes, flags, defines, contract, inputs, compiler_hash, sha256(linker),
+                   linkage=linkage, runtime=runtime)
     # Keep pinned compiler/Rust licenses with the source dependency licenses.
     for name, root in [('llvm', llvm), ('rust', Path(settings['rust_sysroot_absolute']))]:
         for item in regular_files(root):
@@ -297,7 +350,7 @@ def export(args):
                 output.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(item, output)
     provenance = dict(schema=1, source=identity, toolchain=args.toolchain,
-                      configuration='windows-x64-static-release',
+                      configuration=f'windows-x64-{linkage}-release', runtime_files=runtime,
                       compiler_version=run([clang, '--version']).strip(), compiler_sha256=compiler_hash,
                       linker_sha256=sha256(linker), gn_args=args_text, artifacts=artifacts,
                       source_lock=inventory['lock'], includes=includes, defines=defines,
@@ -319,6 +372,7 @@ def main():
     parser.add_argument('--build-dir', required=True)
     parser.add_argument('--destination', required=True)
     parser.add_argument('--toolchain', choices=['chromium', 'external'], required=True)
+    parser.add_argument('--linkage', choices=['static', 'shared'], default='static')
     parser.add_argument('--gn', default=str(ROOT / '.tools/gn/gn.exe'))
     parser.add_argument('--ninja', default=str(ROOT / '.tools/ninja/ninja.exe'))
     parser.add_argument('--jobs', type=int, default=6)

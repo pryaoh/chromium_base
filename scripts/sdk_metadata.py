@@ -87,9 +87,11 @@ def consumer_flags(flags):
     return result, includes
 
 
-def validate_configuration(args):
+def validate_configuration(args, linkage='static'):
+    if linkage not in ('static', 'shared'):
+        raise ValueError('Unsupported SDK linkage: ' + linkage)
     required = dict(target_cpu='x64', is_clang=True, use_lld=True,
-                    use_custom_libcxx=True, is_component_build=False, is_debug=False)
+                    use_custom_libcxx=True, is_component_build=linkage == 'shared', is_debug=False)
     for key, value in required.items():
         if args.get(key) != value:
             raise ValueError(f'Export requires {key} = {value!r}')
@@ -98,6 +100,16 @@ def validate_configuration(args):
         'rust_crubit_root', 'rustc_version'}
     if args.keys() - supported:
         raise ValueError('Unsupported SDK build arguments: ' + ', '.join(sorted(args.keys() - supported)))
+
+
+def runtime_contract(flags, defines, linkage):
+    """Require CRT and component ABI to agree with the selected SDK kind."""
+    expected = '/MD' if linkage == 'shared' else '/MT'
+    crt_flags = {flag.upper() for flag in flags if flag.upper() in ('/MT', '/MD', '/MTD', '/MDD')}
+    component = any(value.split('=', 1)[0] == 'COMPONENT_BUILD' for value in defines)
+    if crt_flags != {expected} or component != (linkage == 'shared'):
+        raise ValueError('GN consumer CRT/component ABI does not match SDK linkage')
+    return 'MultiThreadedDLL' if linkage == 'shared' else 'MultiThreaded'
 
 
 def parse_args(text):
@@ -115,7 +127,7 @@ def parse_args(text):
     return result
 
 
-def link_contract(command, excluded):
+def link_contract(command, excluded, local_outputs=()):
     tokens = windows_split(command)
     positions = [i for i, arg in enumerate(tokens)
                  if arg.replace('\\', '/').rsplit('/', 1)[-1].lower() == 'lld-link.exe']
@@ -123,6 +135,7 @@ def link_contract(command, excluded):
         raise ValueError('Expected selected lld-link command')
     inputs, system, options = [], [], []
     excluded = {p.replace('\\', '/') for p in excluded}
+    local_outputs = {p.replace('\\', '/').lower() for p in local_outputs}
     for arg in tokens[positions[0] + 1:]:
         norm = arg.replace('\\', '/')
         lower = arg.lower()
@@ -137,7 +150,7 @@ def link_contract(command, excluded):
         if lower in ('/lldignoreenv', '/wx'):
             continue
         if lower.endswith(('.obj', '.o', '.lib', '.rlib')) and not arg.startswith(('/', '-')):
-            if '/' not in norm and lower.endswith('.lib'):
+            if '/' not in norm and lower.endswith('.lib') and norm.lower() not in local_outputs:
                 system.append(arg)
             else:
                 inputs.append(norm)

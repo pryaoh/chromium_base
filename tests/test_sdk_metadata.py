@@ -49,6 +49,19 @@ class ContractTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 sdk_metadata.validate_configuration(dict(good, **{key: value}))
 
+    def test_shared_export_requires_explicit_selection_and_dynamic_crt(self):
+        args = dict(target_cpu='x64', is_clang=True, use_lld=True,
+                    use_custom_libcxx=True, is_component_build=True, is_debug=False)
+        sdk_metadata.validate_configuration(args, linkage='shared')
+        self.assertEqual(sdk_metadata.runtime_contract(['/MD'], ['COMPONENT_BUILD'], 'shared'),
+                         'MultiThreadedDLL')
+        with self.assertRaises(ValueError):
+            sdk_metadata.runtime_contract(['/MT'], ['COMPONENT_BUILD'], 'shared')
+        with self.assertRaises(ValueError):
+            sdk_metadata.runtime_contract(['/MD'], [], 'shared')
+        with self.assertRaises(ValueError):
+            sdk_metadata.runtime_contract(['/MT'], ['COMPONENT_BUILD'], 'static')
+
     def test_link_inputs_skip_probe_but_preserve_runtime_objects_libraries_and_system_libs(self):
         command = 'python wrapper.py link-wrapper env False C:/LLVM/bin/lld-link.exe /OUT:consumer.exe /MACHINE:X64 obj/probe.obj obj/base/base.lib obj/runtime.obj obj/rust/libstd.rlib kernel32.lib /PDB:consumer.pdb /INCLUDE:required /SUBSYSTEM:CONSOLE,10.0'
         result = sdk_metadata.link_contract(command, ['obj/probe.obj'])
@@ -64,6 +77,12 @@ class ContractTests(unittest.TestCase):
     def test_windows_nasm_object_suffix_is_a_runtime_input(self):
         result = sdk_metadata.link_contract('lld-link.exe /lib obj/crypto/aes-win.o', [])
         self.assertEqual(result['inputs'], ['obj/crypto/aes-win.o'])
+
+    def test_root_level_import_libraries_are_not_system_libraries(self):
+        result = sdk_metadata.link_contract('lld-link.exe base.dll.lib kernel32.lib', [],
+                                           local_outputs=['base.dll.lib'])
+        self.assertEqual(result['inputs'], ['base.dll.lib'])
+        self.assertEqual(result['system_libs'], ['kernel32.lib'])
 
 
 if __name__ == '__main__':

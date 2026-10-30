@@ -1,4 +1,7 @@
 find_package(ChromiumBase CONFIG REQUIRED)
 add_executable(sdk_consumer ../main.cc)
 target_link_libraries(sdk_consumer PRIVATE sdk_probe ChromiumBase::base)
+if(COMMAND chromium_base_deploy_runtime)
+  chromium_base_deploy_runtime(sdk_consumer)
+endif()
 add_test(NAME sdk_consumer COMMAND sdk_consumer)

@@ -79,6 +79,26 @@ class ExportTests(unittest.TestCase):
                     export_sdk.export(args)
                 self.assertEqual(verify.call_args.args[0]['source'], str(source.resolve()))
 
+    def test_runtime_dependencies_reject_escape_and_missing_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp)
+            (build / 'base.dll').write_bytes(b'MZ')
+            self.assertEqual(export_sdk.runtime_files(['consumer.exe', 'consumer.exe.pdb',
+                                                       './base.dll', './base.dll.pdb'], build),
+                             [build / 'base.dll'])
+            for entries in (['../escape.dll'], ['missing.dll'], ['unknown.dat']):
+                with self.subTest(entries=entries), self.assertRaises((ValueError, FileNotFoundError)):
+                    export_sdk.runtime_files(entries, build)
+
+    def test_runtime_deployment_rejects_flattening_collisions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp)
+            (build / 'nested').mkdir()
+            (build / 'base.dll').write_bytes(b'MZ')
+            (build / 'nested/base.dll').write_bytes(b'MZ')
+            with self.assertRaisesRegex(ValueError, 'collision'):
+                export_sdk.runtime_files(['base.dll', 'nested/base.dll'], build)
+
 
 if __name__ == '__main__':
     unittest.main()

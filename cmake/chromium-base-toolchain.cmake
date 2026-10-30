@@ -13,6 +13,7 @@ set(CMAKE_LINKER "${CHROMIUM_BASE_LLVM_ROOT}/bin/lld-link.exe")
 set(CMAKE_AR "${CHROMIUM_BASE_LLVM_ROOT}/bin/lld-link.exe")
 set(CMAKE_USER_MAKE_RULES_OVERRIDE "${CMAKE_CURRENT_LIST_DIR}/chromium-base-rules.cmake")
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+include("${CMAKE_CURRENT_LIST_DIR}/chromium-base-runtime.cmake" OPTIONAL)
 # Avoid CMake's default /EHsc, /GR and /MD conflicting with the GN ABI contract.
 set(CMAKE_C_FLAGS "" CACHE STRING "C flags")
 set(CMAKE_CXX_FLAGS "" CACHE STRING "C++ flags")
