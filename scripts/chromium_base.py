@@ -26,7 +26,7 @@ def gn_string(value):
 
 
 def make_plan(source, toolchain="external", llvm_root=None,
-              linkage="static", configuration="release"):
+              linkage="static", configuration="release", output_dir=None):
     if toolchain not in ("external", "chromium"):
         raise ValueError("Unknown toolchain")
     if linkage not in ("static", "shared") or configuration not in ("release", "debug"):
@@ -41,6 +41,10 @@ def make_plan(source, toolchain="external", llvm_root=None,
                     Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "LLVM").resolve()
     name = f"windows-x64-{toolchain}-{linkage}-{configuration}"
     output = source / "out" / "chromium-base" / name
+    if output_dir is not None:
+        output = Path(output_dir).resolve()
+        if output == source / 'out' or not output.is_relative_to(source / 'out'):
+            raise ValueError('--output-dir must be a subdirectory of the source out directory')
     rust_root = REPO_ROOT / ".tools/rust-toolchain"
     rust_package = json.loads((REPO_ROOT / "tools.lock.json").read_text())["packages"]["rust-toolchain"]
     args = [
@@ -347,12 +351,14 @@ def main(argv=None):
     parser.add_argument("--llvm-root", type=Path, help="External LLVM root; otherwise LLVM_ROOT or Program Files/LLVM")
     parser.add_argument("--linkage", choices=("static", "shared"), default="static")
     parser.add_argument("--configuration", choices=("release", "debug"), default="release")
+    parser.add_argument("--output-dir", type=Path,
+                        help="Explicit short build directory beneath <source>/out (use the same value for configure/build)")
     parser.add_argument("--depot-tools", type=Path, help="depot_tools directory containing autoninja.py")
     parser.add_argument("--gn", type=Path, help="Override .tools/gn/gn.exe")
     parser.add_argument("--ninja", type=Path, help="Override .tools/ninja/ninja.exe; no depot_tools required")
     args = parser.parse_args(argv)
     try:
-        plan = make_plan(args.source, args.toolchain, args.llvm_root, args.linkage, args.configuration)
+        plan = make_plan(args.source, args.toolchain, args.llvm_root, args.linkage, args.configuration, args.output_dir)
         if args.command == "plan":
             print(json.dumps(plan, indent=2))
             return 0

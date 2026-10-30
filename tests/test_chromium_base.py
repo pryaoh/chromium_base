@@ -73,6 +73,20 @@ class PlanTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--llvm-root", result.stderr)
 
+    def test_explicit_short_output_is_recorded_without_changing_build_flags(self):
+        short = self.source / 'out/sh'
+        result = self.plan('--toolchain', 'chromium', '--linkage', 'shared', '--output-dir', str(short))
+        self.assertEqual(Path(result['output']), short)
+        self.assertIn('is_component_build = true', result['gn_args'])
+        self.assertFalse(short.exists())
+
+    def test_explicit_output_cannot_escape_or_replace_the_out_root(self):
+        for output in (self.root / 'outside', self.source / 'out', self.source / 'base'):
+            with self.subTest(output=output):
+                result = self.run_cli('plan', '--source', str(self.source),
+                                      '--toolchain', 'chromium', '--output-dir', str(output))
+                self.assertNotEqual(result.returncode, 0)
+
 
 class ExecutionTests(unittest.TestCase):
     def setUp(self):
