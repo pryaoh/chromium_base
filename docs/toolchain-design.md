@@ -95,9 +95,10 @@ Do not equate source synchronization or driver tests with a successful native bu
 4. Build both variants and compile/run consumer examples against the packaged
    headers and libraries outside the Chromium source tree.
 
-The Windows x64 Chromium LLVM static target has built successfully. Shared-library
-linking, external LLVM builds, packaging, and consumer ABI compatibility remain
-unverified. Broad MSVC STL compatibility and a stable C ABI are not promised.
+Windows x64 Chromium LLVM static/shared builds, packaging and external consumers
+have passed. Upstream LLVM 24 shared builds and consumers have also passed; its
+static validation is in progress. Broad MSVC STL compatibility and a stable C ABI
+are not promised.
 
 ## Implementation evidence on 2026-10-28
 
@@ -129,6 +130,23 @@ unverified. Broad MSVC STL compatibility and a stable C ABI are not promised.
   regenerated after the final header additions and match the verified inventory.
 - LLVM, GN, Ninja and Rust live outside the source snapshot. Rust package identity
   is checked against the lock rather than inferred from a version label alone.
+
+## Verification evidence on 2026-10-30
+
+- Chromium LLVM static/shared SDKs passed relocated CMake consumer builds and
+  execution. Shared runtime verification deployed 19 DLLs, audited PE imports and
+  confirmed missing-base.dll failure with status 0xC0000135.
+- Independent external LLVM 24.0.0git was installed in `.tools/external-llvm` from
+  official main commit `6dc0e52d1e7f7ebef472d00b7e4b1e8c8cba146f`.
+  The GitHub artifact SHA-256 was verified before extraction; no system PATH changes.
+- External shared GN generated 856 targets; all 2,275 build tasks passed without
+  upstream source patches. Relocated SDK fixture and hello_base sample passed;
+  2,307 header dependencies contain no original source/build references. Both
+  isolated shared deployments passed, including the missing-DLL negative check.
+- External static compilation was interrupted after 834/2,346 jobs. No compiler
+  process remained on resumption; source/tool identity checks and managed configure
+  are repeated before Ninja resumes existing outputs. Final result is pending.
+- Full Python regression suite: 59 tests passed before incremental commits.
 
 ## References
 
