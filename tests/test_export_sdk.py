@@ -81,7 +81,7 @@ class ExportTests(unittest.TestCase):
 
     def test_runtime_dependencies_reject_escape_and_missing_files(self):
         with tempfile.TemporaryDirectory() as tmp:
-            build = Path(tmp)
+            build = Path(tmp).resolve()
             (build / 'base.dll').write_bytes(b'MZ')
             self.assertEqual(export_sdk.runtime_files(['consumer.exe', 'consumer.exe.pdb',
                                                        './base.dll', './base.dll.pdb'], build),

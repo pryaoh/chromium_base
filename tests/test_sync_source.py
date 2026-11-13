@@ -115,6 +115,45 @@ class SourceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing"):
             sync.verify_snapshot(dest)
 
+    def test_inventory_accepts_a_relative_snapshot_root(self):
+        sync = self.module()
+        dest = self.root / "snapshot"
+        dest.mkdir()
+        (dest / "header.h").write_bytes(b"abc")
+        previous = Path.cwd()
+        try:
+            os.chdir(self.root)
+            inventory = sync.write_inventory(Path("snapshot"),
+                {"repositories": [{"revision": "a" * 40}]})
+        finally:
+            os.chdir(previous)
+        self.assertEqual(inventory["files"], {
+            "header.h": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"})
+        self.assertEqual(json.loads((dest / sync.INVENTORY).read_text())["files"], inventory["files"])
+        self.assertEqual(sync.verify_snapshot(dest)["source_files"], 1)
+
+    @unittest.skipUnless(os.name == "nt", "Windows short paths")
+    def test_inventory_accepts_a_windows_short_snapshot_root(self):
+        import ctypes
+        from ctypes import wintypes
+        sync = self.module()
+        dest = self.root / "snapshot with a long directory name"
+        dest.mkdir()
+        (dest / "header.h").write_bytes(b"original")
+        get_short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+        get_short_path.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        get_short_path.restype = wintypes.DWORD
+        size = get_short_path(str(dest), None, 0)
+        self.assertGreater(size, 0, ctypes.get_last_error())
+        buffer = ctypes.create_unicode_buffer(size)
+        self.assertGreater(get_short_path(str(dest), buffer, size), 0)
+        short = Path(buffer.value)
+        if short == dest.resolve():
+            self.skipTest("8.3 names are disabled on this volume")
+        inventory = sync.write_inventory(short, {"repositories": [{"revision": "a" * 40}]})
+        self.assertEqual(set(inventory["files"]), {"header.h"})
+        self.assertEqual(sync.verify_snapshot(dest)["source_files"], 1)
+
     def test_sync_preserves_existing_destination(self):
         sync = self.module()
         dest = self.root / "snapshot"

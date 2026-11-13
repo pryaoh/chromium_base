@@ -23,7 +23,7 @@ class PlanTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.source = self.root / "source with spaces"
         self.llvm = self.root / "LLVM $custom"
 
@@ -207,13 +207,17 @@ class ExecutionTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_bundled_shared_configuration_accepts_relative_ninja_paths(self):
-        self.plan = driver.make_plan(self.root / "src", toolchain="chromium", linkage="shared")
+        # Keep the fake bundled compiler and output on the same drive, even
+        # when the checkout and Windows temporary directory use different drives.
+        (self.root / "tools.lock.json").write_bytes((driver.REPO_ROOT / "tools.lock.json").read_bytes())
+        with patch.object(driver, "REPO_ROOT", self.root.resolve()):
+            self.plan = driver.make_plan(self.root / "src", toolchain="chromium", linkage="shared")
         self.output = Path(self.plan["output"])
         def generate(command, **kwargs):
             self.successful_gn(command, **kwargs)
             relative = os.path.relpath(Path(self.plan["llvm_root"]) / "bin", self.output).replace("\\", "/")
             (self.output / "toolchain.ninja").write_text(
-                f"command = {relative}/clang-cl.exe\ncommand = {relative}/lld-link.exe\n", encoding="utf-8")
+                f'command = "{relative}/clang-cl.exe"\ncommand = "{relative}/lld-link.exe"\n', encoding="utf-8")
             return 0
         with patch.object(driver, "run_command", side_effect=generate):
             driver.configure(self.plan, self.report)

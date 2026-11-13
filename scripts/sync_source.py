@@ -216,7 +216,7 @@ def source_files(destination):
 
 
 def write_inventory(destination, lock):
-    destination = Path(destination)
+    destination = Path(destination).resolve()
     paths = source_files(destination)
     with ThreadPoolExecutor(max_workers=16) as pool:
         files = dict(zip((p.relative_to(destination).as_posix() for p in paths), pool.map(sha256, paths)))
