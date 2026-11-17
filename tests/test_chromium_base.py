@@ -242,7 +242,8 @@ class ExecutionTests(unittest.TestCase):
         with patch.object(driver.os.path, "relpath", side_effect=ValueError("path is on another mount")):
             self.configure_success()
 
-    def ready_doctor_report(self, toolchain_text=None):
+    def ready_doctor_report(self, toolchain_text=None, setup_toolchain_text=None, sdk_versions=None,
+                            debuggers=True):
         self.plan = driver.make_plan(self.root / "src", llvm_root=self.root / "LLVM")
         source = Path(self.plan["source"])
         for name in (".gn", "DEPS", "base/BUILD.gn", "build/config/BUILDCONFIG.gn"):
@@ -262,6 +263,16 @@ class ExecutionTests(unittest.TestCase):
             path = source / "build/toolchain/toolchain.gni"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(toolchain_text, encoding="utf-8")
+        if setup_toolchain_text is not None:
+            path = source / "build/toolchain/win/setup_toolchain.py"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(setup_toolchain_text, encoding="utf-8")
+        kits = self.root / "Kits/10"
+        if debuggers:
+            (kits / "Debuggers/x64").mkdir(parents=True)
+            (kits / "Debuggers/x64/dbghelp.dll").touch()
+        host = ({} if sdk_versions is None else
+                {"windows_sdk_root": str(kits), "windows_sdk_versions": sdk_versions}, [])
         def capture(command, **kwargs):
             if command[0] == "git":
                 if "--show-toplevel" in command:
@@ -272,7 +283,7 @@ class ExecutionTests(unittest.TestCase):
             if "lld-link" in command[0]:
                 return "LLD 23.1.0"
             return "2400"
-        with patch.object(driver, "capture", side_effect=capture), patch.object(driver, "windows_prerequisites", return_value=({}, [])), patch.object(driver, "inspect_rust", return_value={"archive_sha256": "fixture"}):
+        with patch.object(driver, "capture", side_effect=capture), patch.object(driver, "windows_prerequisites", return_value=host), patch.object(driver, "inspect_rust", return_value={"archive_sha256": "fixture"}):
             return driver.inspect_environment(self.plan, depot, gn)
 
     def test_doctor_accepts_upstream_lld_librarian_without_llvm_lib(self):
@@ -327,6 +338,56 @@ class ExecutionTests(unittest.TestCase):
         report = self.ready_doctor_report('clang_version = "24"\n')
         self.assertFalse(report["ok"])
         self.assertIn("expects Clang major 24", "\n".join(report["errors"]))
+
+    def test_default_msvc_toolset_requires_atl_headers(self):
+        vs = self.root / "VS"
+        (vs / "VC/Auxiliary/Build").mkdir(parents=True)
+        (vs / "VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt").write_text("14.51.1\n", encoding="utf-8")
+        errors = driver.msvc_atl_errors(vs)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("ATL", errors[0])
+        self.assertIn("14.51.1", errors[0])
+        (vs / "VC/Tools/MSVC/14.51.1/atlmfc/include").mkdir(parents=True)
+        (vs / "VC/Tools/MSVC/14.51.1/atlmfc/include/atldef.h").touch()
+        self.assertEqual(driver.msvc_atl_errors(vs), [])
+
+    def test_upstream_scripts_run_with_locale_encoding(self):
+        # Python 3.15 enables UTF-8 mode by default (PEP 686); upstream scripts decode
+        # localized tool output such as icacls with the locale code page.
+        with patch.dict(driver.os.environ, {"PYTHONUTF8": "1"}):
+            env = driver.build_environment({})
+        self.assertEqual(env["PYTHONUTF8"], "0")
+
+    def test_missing_pinned_windows_sdk_is_rejected_before_gn(self):
+        report = self.ready_doctor_report(
+            setup_toolchain_text="SDK_VERSION = '10.0.28000.0'\n", sdk_versions=["10.0.26100.0"])
+        self.assertFalse(report["ok"])
+        errors = "\n".join(report["errors"])
+        self.assertIn("10.0.28000.0", errors)
+        self.assertIn("10.0.26100.0", errors)
+        self.assertEqual(report["identity"]["required_windows_sdk"], "10.0.28000.0")
+
+    def test_installed_pinned_windows_sdk_is_accepted(self):
+        report = self.ready_doctor_report(
+            setup_toolchain_text='SDK_VERSION = "10.0.28000.0"  # pinned\n',
+            sdk_versions=["10.0.26100.0", "10.0.28000.0"])
+        self.assertTrue(report["ok"], report["errors"])
+        self.assertEqual(report["identity"]["required_windows_sdk"], "10.0.28000.0")
+
+    def test_missing_sdk_debugging_tools_are_rejected_before_gn(self):
+        report = self.ready_doctor_report(
+            setup_toolchain_text="SDK_VERSION = '10.0.28000.0'\n", sdk_versions=["10.0.28000.0"],
+            debuggers=False)
+        self.assertFalse(report["ok"])
+        errors = "\n".join(report["errors"])
+        self.assertIn("Debugging Tools for Windows", errors)
+        self.assertIn("dbghelp.dll", errors)
+
+    def test_unreadable_sdk_pin_defers_to_gn(self):
+        report = self.ready_doctor_report(
+            setup_toolchain_text="SDK_VERSION = compute()\n", sdk_versions=["10.0.26100.0"])
+        self.assertTrue(report["ok"], report["errors"])
+        self.assertIn("SDK_VERSION", "\n".join(report["warnings"]))
 
     def test_generated_rules_reject_extra_parent_prefix_and_executable_suffix(self):
         self.plan = driver.make_plan(self.root / "src", toolchain="chromium")

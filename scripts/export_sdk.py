@@ -237,10 +237,9 @@ def export(args):
     elif args.toolchain == 'chromium' and llvm != (ROOT / '.tools/chromium-llvm').resolve():
         raise ValueError('Selected Chromium LLVM does not match build arguments')
     clang, linker = llvm / 'bin/clang-cl.exe', llvm / 'bin/lld-link.exe'
-    from chromium_base import verify_generated_toolchain
+    from chromium_base import build_environment, verify_generated_toolchain
     verify_generated_toolchain({'source': str(source), 'output': str(build), 'llvm_root': str(llvm)})
-    env = dict(os.environ, DEPOT_TOOLS_WIN_TOOLCHAIN='0', CHROMIUM_BASE_PYTHON=sys.executable,
-               PYTHONDONTWRITEBYTECODE='1')
+    env = build_environment({})
     print('Checking/building base dependencies...', flush=True)
     run([args.ninja, '-C', build, '-j', str(args.jobs), 'base'], env=env)
     if (build / 'args.gn').read_text(encoding='utf-8') != args_text:

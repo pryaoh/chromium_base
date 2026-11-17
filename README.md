@@ -94,13 +94,18 @@ Git 부분 클론에서 선택된 파일의 객체만 내려받으며 전체 소
 
 ## Windows 빌드
 
-Visual Studio C++ 데스크톱 도구와 선택한 커밋이 요구하는 SDK가 필요합니다.
+Visual Studio C++ 데스크톱 도구, **C++ ATL for latest build tools (x86 & x64)** 구성 요소와
+선택한 커밋이 요구하는 SDK가 필요합니다. `base/win`이 ATL 헤더를 사용합니다.
 이 PC에는 VS 2026과 SDK 10.0.28000.0이 준비되어 있습니다.
 SDK 도구 버전은 10.0.28000.2526이며 x86·x64·ARM64 라이브러리와 리소스 컴파일러,
 UWP 헤더 및 x64 디버깅 도구를 확인했습니다. 실행 중인 VS를 유지하기 위해 사용자 승인하에
 Microsoft의 SDK 독립 설치 프로그램을 사용했으며 재부팅은 필요하지 않았습니다.
 필수 GN 의존성은 보완했으며 Chromium LLVM 정적 빌드가 성공했습니다.
 드라이버는 시스템 구성 요소를 자동 설치하지 않습니다.
+드라이버는 Chromium의 hermetic toolchain을 끄므로 upstream이 추출본의
+`build/toolchain/win/setup_toolchain.py`의 `SDK_VERSION`을 그대로 요구합니다.
+더 새 SDK로 대체할 수 없으며, `doctor`가 GN 실행 전에 이 정확한 버전의 설치 여부를 검사합니다.
+GN 생성 중 `dbghelp.dll`을 복사하므로 SDK의 **Debugging Tools for Windows** 기능도 필요합니다.
 
 ```powershell
 # 설정 미리보기와 환경 검사
@@ -233,7 +238,9 @@ C/C++ 혼합 타깃에 이 C++ 옵션을 그대로 전달하지 마세요.
 공백이 있는 경로로 옮긴 뒤 소비자 정적 라이브러리·실행 파일의 컴파일, 링크, 실행을 통과했고,
 실제 헤더 의존성 2,315건에 원래 Chromium 소스/빌드 경로가 없음을 확인했습니다.
 서로 다른 CMake 하위 디렉터리에서 `find_package`를 각각 호출하는 경우도 검증했습니다.
-CMake는 4.3.1-msvc1로 검증했습니다. 전체 Python 단위 테스트는 59개가 통과했습니다.
+CMake는 4.3.1-msvc1로 검증했습니다. 전체 Python 단위 테스트는 67개가 통과했습니다.
+두 번째 Windows PC(한국어 로캘, Python 3.15)의 깨끗한 클론에서 Chromium LLVM 정적·동적 흐름을
+처음부터 다시 재현했습니다([기록](docs/superpowers/plans/2026-11-18-clean-clone-reproduction.md)).
 
 동적 SDK는 `out/sdk/relocated sdk/windows-x64-chromium-shared-release`입니다.
 크기는 약 **121 MiB**(127,028,061바이트, 9,469개 파일)이며 링크 입력 11개와

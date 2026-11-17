@@ -76,6 +76,18 @@ def capture(command, cwd=None):
     return result.stdout.strip()
 
 
+def msvc_atl_errors(vs):
+    """base/win includes ATL headers from the toolset vcvarsall.bat selects by default."""
+    try:
+        toolset = (vs / "VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt").read_text(encoding="utf-8").strip()
+    except OSError as error:
+        return [f"Cannot determine the default MSVC toolset: {error}"]
+    if (vs / "VC/Tools/MSVC" / toolset / "atlmfc/include/atldef.h").is_file():
+        return []
+    return [f"Visual Studio C++ ATL for MSVC {toolset} is missing; add the "
+            "\"C++ ATL for latest build tools (x86 & x64)\" component in the Visual Studio Installer"]
+
+
 def windows_prerequisites():
     """Return host locations and errors; GN remains responsible for SDK version floors."""
     info, errors = {}, []
@@ -91,6 +103,7 @@ def windows_prerequisites():
             errors.append("Install Visual Studio Desktop development with C++ (x64 tools)")
         else:
             info["visual_studio"] = vs
+            errors.extend(msvc_atl_errors(Path(vs)))
     except (OSError, subprocess.SubprocessError) as error:
         errors.append(f"Cannot detect Visual Studio C++ tools: {error}")
     sdk = Path(os.environ.get("WindowsSdkDir") or program_files / "Windows Kits/10")
@@ -171,6 +184,29 @@ def inspect_environment(plan, depot_tools=None, gn=None, ninja=None):
             errors.append(f"Checkout expects Clang major {match.group(1)}, selected LLVM is {majors['clang-cl']}; select a compatible checkout/toolchain")
         elif not match:
             warnings.append("Checkout clang_version is conditional or dynamic; defer version compatibility to GN")
+    # The driver disables the hermetic toolchain, so upstream passes this exact
+    # SDK version to vcvarsall.bat; a newer or older installed SDK cannot stand in.
+    setup_toolchain = source / "build/toolchain/win/setup_toolchain.py"
+    if setup_toolchain.is_file() and "windows_sdk_versions" in identity:
+        declarations = re.findall(r'^SDK_VERSION\s*=\s*([^\r\n]*)',
+                                  setup_toolchain.read_text(encoding="utf-8"), re.MULTILINE)
+        match = (re.fullmatch(r'''(['"])(\d+(?:\.\d+){3})\1\s*(?:#.*)?''', declarations[0].strip())
+                 if len(declarations) == 1 else None)
+        if not match:
+            warnings.append("Checkout SDK_VERSION is not a single literal; defer Windows SDK version checks to GN")
+        else:
+            required_sdk = match.group(2)
+            identity["required_windows_sdk"] = required_sdk
+            if required_sdk not in identity["windows_sdk_versions"]:
+                installed = ", ".join(identity["windows_sdk_versions"]) or "none"
+                errors.append(f"Checkout requires Windows SDK {required_sdk} exactly (installed: {installed}); "
+                              "install that SDK version, e.g. with Microsoft's standalone Windows SDK installer")
+    # Upstream copy_dlls requires this during GN generation (build/vs_toolchain.py).
+    if "windows_sdk_root" in identity:
+        dbghelp = Path(identity["windows_sdk_root"]) / "Debuggers/x64/dbghelp.dll"
+        if not dbghelp.is_file():
+            errors.append(f"Windows SDK \"Debugging Tools for Windows\" feature is missing ({dbghelp}); "
+                          "add it by modifying the Windows SDK installation")
     if plan["toolchain"] == "external":
         warnings.append("Matching LLVM major versions is necessary here but does not prove compatibility with Chromium/libc++")
     gn_path = Path(gn).resolve() if gn else REPO_ROOT / ".tools/gn/gn.exe"
@@ -226,6 +262,10 @@ def build_environment(report):
     env["DEPOT_TOOLS_UPDATE"] = "0"
     env["CHROMIUM_BASE_PYTHON"] = sys.executable
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    # Upstream scripts expect locale-encoded text I/O (Chromium's own Python runs
+    # without UTF-8 mode); Python 3.15+ defaults to UTF-8 mode and then fails to
+    # decode localized tool output such as icacls on non-English Windows.
+    env["PYTHONUTF8"] = "0"
     if report.get("depot_tools"):
         env["PATH"] = str(report["depot_tools"]) + os.pathsep + env.get("PATH", "")
     return env

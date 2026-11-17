@@ -25,6 +25,14 @@ def main():
     parser.add_argument('--original-source', type=Path, default=ROOT / 'vendor/chromium')
     args = parser.parse_args()
     sdk, work = args.sdk.resolve(), args.work.resolve()
+    # Resolve once: Windows CreateProcess does not search relative paths such as
+    # .tools/ninja/ninja.exe, while bare names such as cmake come from PATH.
+    def executable(value):
+        found = shutil.which(value)
+        if not found:
+            raise ValueError(f'Executable not found: {value}')
+        return str(Path(found).resolve())
+    args.cmake, args.ninja = executable(args.cmake), executable(args.ninja)
     if work.exists():
         raise ValueError('Use a fresh verification work directory')
     env = dict(os.environ)
@@ -46,7 +54,7 @@ def main():
         print(name + ': OK', flush=True)
         return result.stdout
     run([args.cmake, '-S', source, '-B', build, '-G', 'Ninja',
-         '-DCMAKE_MAKE_PROGRAM=' + str(Path(args.ninja).resolve()),
+         '-DCMAKE_MAKE_PROGRAM=' + args.ninja,
          '-DCMAKE_TOOLCHAIN_FILE=' + str(sdk / 'lib/cmake/ChromiumBase/chromium-base-toolchain.cmake'),
          '-DCHROMIUM_BASE_LLVM_ROOT=' + str(args.llvm_root.resolve()),
          '-DCMAKE_PREFIX_PATH=' + str(sdk), '-DCMAKE_BUILD_TYPE=Release'], 'configure')
