@@ -20,7 +20,10 @@
 - [x] Chromium LLVM static: 847 GN targets, `base.lib`; SDK export 579 link inputs; relocated consumer 2,315 header dependencies with no original-path references; `hello_base` documented commands produce documented output.
 - [x] Chromium LLVM shared: 856 GN targets, 2,275 actions; SDK 11 link inputs and 19 DLLs; relocated consumer 2,307 header dependencies; `hello_base` and consumer pass isolated DLL deployment and the missing-`base.dll` `0xC0000135` check.
 - [x] Python suite: 67 tests pass (6 new).
-- [ ] External LLVM was not re-run on this host; it depends on a GitHub Actions artifact download.
+- [x] External LLVM Release builds and SDK consumers passed on this host on 2026-11-19 at repository commit `9a4e0c9`. The [upstream Windows x64 artifact](https://github.com/llvm/llvm-project/actions/runs/37080272399) (ID `11260327024`) matched SHA-256 `a889ab2ddb4b74d07cdb9b5d099c8c2cf89a2448274640c35500100db8bbf349`. The installed clang-cl reported `24.0.0git` at LLVM commit `6dc0e52d1e7f7ebef472d00b7e4b1e8c8cba146f`.
+  - Static completed all 2,346 Ninja actions and exported 579 link inputs. The relocated SDK consumer used 2,315 header dependencies. Both the consumer and `hello_base` ran from separate executable-only folders with a system-only PATH.
+  - Shared completed all 2,275 Ninja actions and exported 11 link inputs and 19 DLLs. The relocated consumer used 2,307 header dependencies. Both executables ran with the deployed DLLs and returned `0xC0000135` when `base.dll` was removed.
+  - Both consumer audits found zero original source/build path references. Both samples produced the expected JSON for default, ASCII and quoted Korean inputs. Local reports are in `out/sdk-consumer-external-{static,shared}/verification.json` and `out/external-deployment/shared/{hello_base,sdk_consumer}/runtime-verification.json`.
 
 ## Integration gate
 
