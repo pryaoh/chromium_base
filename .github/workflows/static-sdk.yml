@@ -1,0 +1,97 @@
+name: Static SDK release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  sdk:
+    name: Static SDK / ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: windows-x64, runner: windows-2025}
+          - {platform: linux-x64, runner: ubuntu-24.04}
+          - {platform: macos-arm64, runner: macos-26}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Windows SDK and debugging tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $kits = "${env:ProgramFiles(x86)}/Windows Kits/10"
+          if ((Test-Path "$kits/Include/10.0.28000.0/um/Windows.h") -and
+              (Test-Path "$kits/Debuggers/x64/dbghelp.dll") -and
+              (Test-Path "$kits/Lib/10.0.28000.0/um/x64/kernel32.lib")) { exit 0 }
+          $installer = Join-Path $env:RUNNER_TEMP winsdksetup.exe
+          Invoke-WebRequest 'https://go.microsoft.com/fwlink/?linkid=2372508' -OutFile $installer
+          if ((Get-AuthenticodeSignature $installer).Status -ne 'Valid') { throw 'Invalid SDK installer signature' }
+          $p = Start-Process $installer -ArgumentList '/quiet /norestart /features OptionId.DesktopCPPx64 OptionId.WindowsDesktopDebuggers OptionId.UWPCPP' -Wait -PassThru
+          if ($p.ExitCode -notin 0,3010) { throw "Windows SDK setup failed ($($p.ExitCode))" }
+
+      - name: Build and export Windows SDK
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/sync_source.py
+          python scripts/sync_tools.py gn ninja rust-toolchain chromium-llvm
+          output=vendor/chromium/out/s
+          python scripts/chromium_base.py configure --toolchain chromium --linkage static --output-dir "$output"
+          python scripts/chromium_base.py build --toolchain chromium --linkage static --output-dir "$output"
+          python scripts/export_sdk.py --toolchain chromium --linkage static --build-dir "$output" --destination out/static-sdk
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ninja-build pkg-config libcap-dev
+
+      - name: Build and export Unix SDK
+        if: runner.os != 'Windows'
+        run: python scripts/build_posix_sdk.py
+
+      - name: Archive SDK and test relocated CMake consumer
+        run: python scripts/package_static_sdk.py ${{ matrix.platform }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chromium-base-static-${{ matrix.platform }}
+          path: out/release/*.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: sdk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: chromium-base-static-*
+          path: assets
+          merge-multiple: true
+      - name: Publish verified SDKs
+        working-directory: assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          files=(chromium-base-{windows-x64,linux-x64,macos-arm64}-static.zip)
+          sha256sum "${files[@]}" > SHA256SUMS
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes "${files[@]}" SHA256SUMS
