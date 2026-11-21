@@ -75,9 +75,13 @@ def configure(host):
     label = "//out/sdk_probe:sdk_probe"
     args = ["is_debug=false", "is_component_build=false", "symbol_level=0",
             "use_remoteexec=false", "use_clang_modules=false"]
-    args += (["use_sysroot=false", "use_mold=false", "use_glib=false", "use_udev=false",
-              "icu_use_data_file=false"] if host == "Linux"
-             else ["use_system_xcode=true"])
+    if host == "Linux":
+        args += ["use_sysroot=false", "use_mold=false", "use_glib=false", "use_udev=false",
+                 "icu_use_data_file=false"]
+    else:
+        # The Apple toolchain also passes -fmodule-name when compiling a C++ PCH.
+        # The pinned Clang treats that header as a module interface.
+        args += ["use_system_xcode=true", "enable_precompiled_headers=false"]
     run(WORK / "gn", "gen", BUILD, "--args=" + " ".join(args), "--ide=json",
         "--root-target=" + label, "--root-pattern=" + label, "--fail-on-unused-args")
     # Some consumers in this revision lack ordering edges to generated
