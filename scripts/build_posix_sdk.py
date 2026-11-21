@@ -132,6 +132,48 @@ def package_headers(sdk):
                 shutil.copyfile(path, dest)
 
 
+def mac_archive_input(path, scratch, index):
+    with path.open("rb") as stream:
+        header = stream.read(16)
+
+    # A universal binary can contain either archives or individual objects.
+    if header[:4] in (b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf",
+                      b"\xbe\xba\xfe\xca", b"\xbf\xba\xfe\xca"):
+        sliced = scratch / f"{index}-{path.name}"
+        subprocess.run(["xcrun", "lipo", path, "-thin", "arm64", "-output", sliced], check=True)
+        with sliced.open("rb") as stream:
+            header = stream.read(16)
+    else:
+        sliced = path
+
+    if header.startswith((b"!<arch>\n", b"!<thin>\n")):
+        return "addlib", sliced
+    # MH_MAGIC_64 with filetype MH_OBJECT, or raw/wrapped LLVM bitcode.
+    if ((header[:4] == b"\xcf\xfa\xed\xfe" and header[12:16] == b"\x01\0\0\0")
+            or header.startswith((b"BC\xc0\xde", b"\xde\xc0\x17\x0b"))):
+        return "addmod", sliced
+    raise ValueError(f"Unsupported macOS static link input: {path} (header: {header.hex()})")
+
+
+def merge_library(inputs, lib):
+    with tempfile.TemporaryDirectory(dir=lib) as temporary:
+        mri = ["create libchromium_base.a"]
+        for index, path in enumerate(inputs):
+            if platform.system() == "Darwin":
+                command, source = mac_archive_input(path, Path(temporary), index)
+            else:
+                command, source = ("addmod" if path.suffix == ".o" else "addlib"), path
+            mri.append(f'{command} "{source}"')
+        result = subprocess.run([LLVM / "llvm-ar", "-M"], cwd=lib,
+                                input="\n".join([*mri, "save", "end", ""]),
+                                text=True, stderr=subprocess.PIPE)
+        if result.returncode:
+            match = re.search(r"script line (\d+)", result.stderr)
+            line = int(match[1]) if match else 0
+            context = f" while processing {inputs[line - 2]}" if 2 <= line <= len(mri) else ""
+            raise RuntimeError(f"llvm-ar failed{context}: {result.stderr.strip()}")
+
+
 def package_library(target, sdk):
     # Use the actual executable link inputs, including Rust archives and source_sets.
     entries = json.loads(output("ninja", "-t", "compdb", "link", cwd=BUILD))
@@ -142,24 +184,22 @@ def package_library(target, sdk):
             tokens.extend(shlex.split((BUILD / arg[1:]).read_text()))
         else:
             tokens.append(arg)
-    mri = ["create libchromium_base.a"]
+    inputs = []
     system = []
     for i, token in enumerate(tokens):
         path = BUILD / token
         if token.endswith((".o", ".a", ".rlib")) and path.is_file():
             if path.resolve() != (BUILD / entry["file"]).resolve():
-                mri.append(("addmod " if token.endswith(".o") else "addlib ") + f'"{path.resolve()}"')
+                inputs.append(path.resolve())
         elif token.startswith("-l") and re.fullmatch(r"-l[\w+.-]+", token):
             system.append(cmake_quote(token))
         elif token in ("-framework", "-weak_framework"):
             system.append(cmake_quote(token + " " + tokens[i + 1]))
-    if len(mri) < 3:
+    if len(inputs) < 2:
         raise ValueError("Missing base link inputs in Ninja compilation database")
     lib = sdk / "lib"
     lib.mkdir(parents=True)
-    ar = LLVM / "llvm-ar"
-    subprocess.run([ar, "-M"], cwd=lib, input="\n".join([*mri, "save", "end", ""]),
-                   text=True, check=True)
+    merge_library(inputs, lib)
 
     prefix = '${_chromium_base_root}'
     includes = []
