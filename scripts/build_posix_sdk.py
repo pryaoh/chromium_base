@@ -30,7 +30,10 @@ def output(*args, cwd=SOURCE):
 
 def source_lock(host):
     lock = json.loads((ROOT / "source.lock.json").read_text())
-    if host == "Linux":
+    if host == "Darwin":
+        # //base:plist_size_buildflags reads the upstream plist during gn gen.
+        lock["repositories"][0]["paths"].append("chrome/app/app-Info.plist")
+    elif host == "Linux":
         lock["repositories"].append({
             "name": "lss", "destination": "third_party/lss",
             "url": "https://chromium.googlesource.com/linux-syscall-support.git",
