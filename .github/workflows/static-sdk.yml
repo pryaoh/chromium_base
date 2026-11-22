@@ -2,6 +2,11 @@ name: Static SDK release
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Chromium 버전에 맞춰 정식 SDK 릴리스 게시'
+        type: boolean
+        default: false
   push:
     tags: ['v*']
 
@@ -19,6 +24,8 @@ jobs:
           - {platform: linux-x64, runner: ubuntu-24.04}
           - {platform: macos-arm64, runner: macos-26}
     runs-on: ${{ matrix.runner }}
+    outputs:
+      release_tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,6 +70,25 @@ jobs:
         if: runner.os != 'Windows'
         run: python scripts/build_posix_sdk.py
 
+      - name: Read release tag from the built Chromium source
+        id: version
+        shell: python
+        run: |
+          import os
+          import re
+          from pathlib import Path
+
+          source = Path("vendor/chromium" if os.name == "nt" else "out/native/src")
+          fields = dict(line.split("=", 1) for line in (source / "chrome/VERSION").read_text().splitlines())
+          parts = [fields[key] for key in ("MAJOR", "MINOR", "BUILD", "PATCH")]
+          if not all(re.fullmatch(r"[0-9]+", part) for part in parts):
+              raise SystemExit("Invalid Chromium chrome/VERSION")
+          tag = "v" + ".".join(parts)
+          if os.environ["GITHUB_REF_TYPE"] == "tag" and os.environ["GITHUB_REF_NAME"] != tag:
+              raise SystemExit(f"Git tag {os.environ['GITHUB_REF_NAME']} does not match Chromium {tag}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"tag={tag}", file=output)
+
       - name: Archive SDK and test relocated CMake consumer
         run: python scripts/package_static_sdk.py ${{ matrix.platform }}
 
@@ -74,12 +100,15 @@ jobs:
           compression-level: 0
 
   release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' || inputs.publish
     needs: sdk
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           pattern: chromium-base-static-*
@@ -89,9 +118,19 @@ jobs:
         working-directory: assets
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.sdk.outputs.release_tag }}
         run: |
           set -euo pipefail
           files=(chromium-base-{windows-x64,linux-x64,macos-arm64}-static.zip)
           sha256sum "${files[@]}" > SHA256SUMS
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes "${files[@]}" SHA256SUMS
+          tag_ref="refs/tags/$RELEASE_TAG"
+          if git show-ref --verify --quiet "$tag_ref"; then
+            if [[ $(git rev-parse "$tag_ref^{commit}") != "$(git rev-parse HEAD)" ]]; then
+              echo "::error::$RELEASE_TAG already points to a different commit"
+              exit 1
+            fi
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            git push origin "HEAD:$tag_ref"
+          fi
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Chromium Base SDK $RELEASE_TAG" --generate-notes "${files[@]}" SHA256SUMS
