@@ -15,6 +15,7 @@ Chromium의 C++ 라이브러리 `base`와 필요한 의존성만 추출해 정�
 
 릴리스 태그는 빌드한 Chromium의 `chrome/VERSION`을 따릅니다. 예를 들어 `159.0.8128.0`의 SDK 태그는 `v159.0.8128.0`입니다.
 [Static SDK release](.github/workflows/static-sdk.yml)를 수동 실행할 때 **Chromium 버전에 맞춰 정식 SDK 릴리스 게시**를 선택하면, 세 플랫폼의 샘플 검증을 통과한 커밋에 태그를 만들고 ZIP 3개와 `SHA256SUMS`를 게시합니다. 기본 수동 실행은 Actions 아티팩트만 생성합니다. 버전과 일치하는 태그를 직접 푸시해도 릴리스가 게시됩니다.
+정식 SDK를 게시할 때마다 해당 릴리스가 [최신 SDK 다운로드](https://github.com/pryaoh/chromium_base/releases/latest)로 지정됩니다.
 
 SDK를 CMake 프로젝트에 연결하는 예제는 [hello_base 샘플](samples/README.md)을 참고하세요. 소스 추출 방식과 도구 구성은 [설계 문서](docs/toolchain-design.md)에 있습니다.
 

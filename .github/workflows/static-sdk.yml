@@ -132,5 +132,5 @@ jobs:
           elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             git push origin "HEAD:$tag_ref"
           fi
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
             --title "Chromium Base SDK $RELEASE_TAG" --generate-notes "${files[@]}" SHA256SUMS
