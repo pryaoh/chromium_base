@@ -1,13 +1,14 @@
-# Linux x64 정적 SDK
+# Linux x64 SDK
 
 Ubuntu 24.04에서 Python 3.12, Git, curl, Ninja, CMake 3.25 이상과 pkg-config를 준비합니다. 시스템 개발 패키지는 워크플로의 Linux 설치 단계를 참고하세요. 저장소 루트에서 실행하세요.
 
 ```sh
-python3 scripts/build_posix_sdk.py
-python3 scripts/package_static_sdk.py linux-x64
+linkage=shared  # 정적 SDK는 static
+python3 scripts/build_posix_sdk.py --linkage "$linkage"
+python3 scripts/package_sdk.py linux-x64 --linkage "$linkage"
 ```
 
-첫 명령은 고정된 Chromium 소스와 해당 버전의 Clang·Rust를 받아 Release로 빌드하고 헤더와 정적 라이브러리를 `out/static-sdk`에 설치합니다. 새 작업 디렉터리에서 실행하세요. 두 번째 명령은 SDK를 다른 경로에 풀고 CMake로 `hello_base`를 빌드·실행한 뒤 검증된 ZIP을 `out/release/`에 저장합니다.
+각 빌드 유형은 새 작업 디렉터리에서 실행하세요. 동적 빌드는 `out/shared-sdk/lib/`에 `libbase.so`와 필요한 공유 라이브러리를 함께 설치합니다. 정적 빌드의 출력은 `out/static-sdk/`입니다. 패키징 명령은 ZIP을 다른 경로에 풀어 CMake 샘플을 빌드·실행하고, 동적 빌드에서는 샘플이 `libbase.so`에 연결됐는지도 확인합니다. 검증된 ZIP은 `out/release/`에 저장됩니다.
 
 소비 프로젝트에서는 SDK 경로를 `CMAKE_PREFIX_PATH`로, SDK 빌드에 사용한 Chromium `clang++`를 `CMAKE_CXX_COMPILER`로 지정하고 `ChromiumBase::base`에 연결합니다.
 

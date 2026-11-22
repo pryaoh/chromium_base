@@ -1,4 +1,4 @@
-name: Static SDK release
+name: Chromium Base SDK release
 
 on:
   workflow_dispatch:
@@ -15,14 +15,17 @@ permissions:
 
 jobs:
   sdk:
-    name: Static SDK / ${{ matrix.platform }}
+    name: SDK / ${{ matrix.platform }} / ${{ matrix.linkage }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {platform: windows-x64, runner: windows-2025}
-          - {platform: linux-x64, runner: ubuntu-24.04}
-          - {platform: macos-arm64, runner: macos-26}
+          - {platform: windows-x64, linkage: static, runner: windows-2025}
+          - {platform: windows-x64, linkage: shared, runner: windows-2025}
+          - {platform: linux-x64, linkage: static, runner: ubuntu-24.04}
+          - {platform: linux-x64, linkage: shared, runner: ubuntu-24.04}
+          - {platform: macos-arm64, linkage: static, runner: macos-26}
+          - {platform: macos-arm64, linkage: shared, runner: macos-26}
     runs-on: ${{ matrix.runner }}
     outputs:
       release_tag: ${{ steps.version.outputs.tag }}
@@ -51,14 +54,17 @@ jobs:
       - name: Build and export Windows SDK
         if: runner.os == 'Windows'
         shell: bash
+        env:
+          LINKAGE: ${{ matrix.linkage }}
         run: |
           set -euo pipefail
           python scripts/sync_source.py
           python scripts/sync_tools.py gn ninja rust-toolchain chromium-llvm
           output=vendor/chromium/out/s
-          python scripts/chromium_base.py configure --toolchain chromium --linkage static --output-dir "$output"
-          python scripts/chromium_base.py build --toolchain chromium --linkage static --output-dir "$output"
-          python scripts/export_sdk.py --toolchain chromium --linkage static --build-dir "$output" --destination out/static-sdk
+          if [[ "$LINKAGE" == shared ]]; then output=vendor/chromium/out/sh; fi
+          python scripts/chromium_base.py configure --toolchain chromium --linkage "$LINKAGE" --output-dir "$output"
+          python scripts/chromium_base.py build --toolchain chromium --linkage "$LINKAGE" --output-dir "$output"
+          python scripts/export_sdk.py --toolchain chromium --linkage "$LINKAGE" --build-dir "$output" --destination "out/$LINKAGE-sdk"
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -68,7 +74,7 @@ jobs:
 
       - name: Build and export Unix SDK
         if: runner.os != 'Windows'
-        run: python scripts/build_posix_sdk.py
+        run: python scripts/build_posix_sdk.py --linkage ${{ matrix.linkage }}
 
       - name: Read release tag from the built Chromium source
         id: version
@@ -90,12 +96,12 @@ jobs:
               print(f"tag={tag}", file=output)
 
       - name: Archive SDK and test relocated CMake consumer
-        run: python scripts/package_static_sdk.py ${{ matrix.platform }}
+        run: python scripts/package_sdk.py ${{ matrix.platform }} --linkage ${{ matrix.linkage }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: chromium-base-static-${{ matrix.platform }}
-          path: out/release/*.zip
+          name: chromium-base-${{ matrix.linkage }}-${{ matrix.platform }}
+          path: out/release/chromium-base-${{ matrix.platform }}-${{ matrix.linkage }}.zip
           if-no-files-found: error
           compression-level: 0
 
@@ -111,7 +117,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          pattern: chromium-base-static-*
+          pattern: chromium-base-*
           path: assets
           merge-multiple: true
       - name: Publish verified SDKs
@@ -121,7 +127,7 @@ jobs:
           RELEASE_TAG: ${{ needs.sdk.outputs.release_tag }}
         run: |
           set -euo pipefail
-          files=(chromium-base-{windows-x64,linux-x64,macos-arm64}-static.zip)
+          files=(chromium-base-{windows-x64,linux-x64,macos-arm64}-{static,shared}.zip)
           sha256sum "${files[@]}" > SHA256SUMS
           tag_ref="refs/tags/$RELEASE_TAG"
           if git show-ref --verify --quiet "$tag_ref"; then

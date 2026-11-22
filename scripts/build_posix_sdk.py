@@ -1,4 +1,5 @@
 """Build the pinned Chromium base on a native Linux x64 or macOS arm64 host."""
+import argparse
 import json
 import platform
 import re
@@ -15,8 +16,6 @@ from sync_source import INVENTORY, ROOT, synchronize
 
 WORK = ROOT / "out/native"
 SOURCE = WORK / "src"
-BUILD = SOURCE / "out/sdk"
-SDK = ROOT / "out/static-sdk"
 LLVM = SOURCE / "third_party/llvm-build/Release+Asserts/bin"
 
 
@@ -65,15 +64,17 @@ def install_tools(host):
     run(sys.executable, "tools/rust/update_rust.py")
 
 
-def configure(host):
+def configure(host, linkage, build):
     probe = SOURCE / "out/sdk_probe"
     probe.mkdir(parents=True, exist_ok=True)
     (probe / "probe.cc").write_text("int main() { return 0; }\n")
     (probe / "BUILD.gn").write_text(
         'executable("sdk_probe") {\n  sources = [ "probe.cc" ]\n  deps = [ "//base" ]\n'
+        '  write_runtime_deps = "$root_out_dir/sdk_probe.runtime_deps"\n'
         '  data_deps = [ "//third_party/perfetto/src/trace_processor/tables:tables_python" ]\n}\n')
     label = "//out/sdk_probe:sdk_probe"
-    args = ["is_debug=false", "is_component_build=false", "symbol_level=0",
+    component = "true" if linkage == "shared" else "false"
+    args = ["is_debug=false", f"is_component_build={component}", "symbol_level=0",
             "use_remoteexec=false", "use_clang_modules=false"]
     if host == "Linux":
         args += ["use_sysroot=false", "use_mold=false", "use_glib=false", "use_udev=false",
@@ -82,21 +83,21 @@ def configure(host):
         # The Apple toolchain also passes -fmodule-name when compiling a C++ PCH.
         # The pinned Clang treats that header as a module interface.
         args += ["use_system_xcode=true", "enable_precompiled_headers=false"]
-    run(WORK / "gn", "gen", BUILD, "--args=" + " ".join(args), "--ide=json",
+    run(WORK / "gn", "gen", build, "--args=" + " ".join(args), "--ide=json",
         "--root-target=" + label, "--root-pattern=" + label, "--fail-on-unused-args")
     # Some consumers in this revision lack ordering edges to generated
     # Perfetto and Rust bridge headers. Generate the headers in the GN graph
     # before compiling consumers. Bound argv size on both native hosts.
-    entries = output("ninja", "-t", "targets", "all", cwd=BUILD).splitlines()
+    entries = output("ninja", "-t", "targets", "all", cwd=build).splitlines()
     headers = [line.rsplit(": ", 1)[0] for line in entries]
     headers = [name for name in headers if name.startswith("gen/") and is_header(name)]
     for start in range(0, len(headers), 100):
-        run("ninja", "-j", "4", "-C", BUILD, *headers[start:start + 100])
-    run("ninja", "-d", "keeprsp", "-j", "4", "-C", BUILD, "sdk_probe")
-    return json.loads((BUILD / "project.json").read_text())["targets"][label]
+        run("ninja", "-j", "4", "-C", build, *headers[start:start + 100])
+    run("ninja", "-d", "keeprsp", "-j", "4", "-C", build, "sdk_probe")
+    return json.loads((build / "project.json").read_text())["targets"][label]
 
 
-def package_headers(sdk):
+def package_headers(sdk, linkage, build):
     inventory = json.loads((SOURCE / INVENTORY).read_text())
     for name in inventory["files"]:
         path = SOURCE / name
@@ -108,9 +109,9 @@ def package_headers(sdk):
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, dest)
-    for path in (BUILD / "gen").rglob("*"):
+    for path in (build / "gen").rglob("*"):
         if path.is_file() and is_header(path.name):
-            dest = sdk / "include/generated" / path.relative_to(BUILD / "gen")
+            dest = sdk / "include/generated" / path.relative_to(build / "gen")
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, dest)
     (sdk / "source.lock.json").write_text(json.dumps(inventory["lock"], indent=2) + "\n")
@@ -118,10 +119,10 @@ def package_headers(sdk):
         "revision": inventory["revision"],
         "platform": platform.system(),
         "architecture": platform.machine(),
-        "linkage": "static",
+        "linkage": linkage,
         "configuration": "release",
         "compiler": output(LLVM / "clang++", "--version").splitlines()[0],
-        "gn_args": (BUILD / "args.gn").read_text(),
+        "gn_args": (build / "args.gn").read_text(),
     }
     (sdk / "sdk-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     for root in (LLVM.parent, SOURCE / "third_party/rust-toolchain"):
@@ -155,9 +156,9 @@ def mac_archive_input(path, scratch, index):
     raise ValueError(f"Unsupported macOS static link input: {path} (header: {header.hex()})")
 
 
-def merge_library(inputs, lib):
+def merge_library(inputs, lib, name="libchromium_base.a"):
     with tempfile.TemporaryDirectory(dir=lib) as temporary:
-        mri = ["create libchromium_base.a"]
+        mri = [f"create {name}"]
         for index, path in enumerate(inputs):
             if platform.system() == "Darwin":
                 command, source = mac_archive_input(path, Path(temporary), index)
@@ -174,41 +175,67 @@ def merge_library(inputs, lib):
             raise RuntimeError(f"llvm-ar failed{context}: {result.stderr.strip()}")
 
 
-def package_library(target, sdk):
+def copy_component_libraries(build, lib, suffix):
+    # GN includes transitive runtime components that the probe does not link directly.
+    names = set()
+    for entry in (build / "sdk_probe.runtime_deps").read_text().splitlines():
+        path = build / entry
+        if path.suffix == suffix:
+            if path.name in names:
+                raise ValueError(f"Conflicting runtime library name: {path.name}")
+            shutil.copy2(path, lib / path.name)
+            names.add(path.name)
+    if "libbase" + suffix not in names:
+        raise ValueError("Missing Chromium base shared library in GN runtime dependencies")
+    return names
+
+
+def package_library(target, sdk, linkage, build):
     # Use the actual executable link inputs, including Rust archives and source_sets.
-    entries = json.loads(output("ninja", "-t", "compdb", "link", cwd=BUILD))
+    entries = json.loads(output("ninja", "-t", "compdb", "link", cwd=build))
     entry = next(item for item in entries if Path(item["output"]).name == "sdk_probe")
     tokens = []
     for arg in shlex.split(entry["command"]):
         if arg.startswith("@"):
-            tokens.extend(shlex.split((BUILD / arg[1:]).read_text()))
+            tokens.extend(shlex.split((build / arg[1:]).read_text()))
         else:
             tokens.append(arg)
-    inputs = []
-    system = []
-    for i, token in enumerate(tokens):
-        path = BUILD / token
-        if token.endswith((".o", ".a", ".rlib")) and path.is_file():
-            if path.resolve() != (BUILD / entry["file"]).resolve():
-                inputs.append(path.resolve())
-        elif token.startswith("-l") and re.fullmatch(r"-l[\w+.-]+", token):
-            system.append(cmake_quote(token))
-        elif token in ("-framework", "-weak_framework"):
-            system.append(cmake_quote(token + " " + tokens[i + 1]))
-    if len(inputs) < 2:
-        raise ValueError("Missing base link inputs in Ninja compilation database")
     lib = sdk / "lib"
     lib.mkdir(parents=True)
-    merge_library(inputs, lib)
-
     prefix = '${_chromium_base_root}'
+    suffix = ".dylib" if platform.system() == "Darwin" else ".so"
+    location = "libbase" + suffix if linkage == "shared" else "libchromium_base.a"
+    components = copy_component_libraries(build, lib, suffix) if linkage == "shared" else set()
+    inputs = []
+    link_libraries = []
+    for i, token in enumerate(tokens):
+        path = build / token
+        if token.endswith((".o", ".a", ".rlib")) and path.is_file():
+            if path.resolve() != (build / entry["file"]).resolve():
+                inputs.append(path.resolve())
+        elif path.name in components and path.name != location:
+            link_libraries.append(f'"{prefix}/lib/{path.name}"')
+        elif token.startswith("-l") and re.fullmatch(r"-l[\w+.-]+", token):
+            link_libraries.append(cmake_quote(token))
+        elif token in ("-framework", "-weak_framework"):
+            link_libraries.append(cmake_quote(token + " " + tokens[i + 1]))
+    if linkage == "static":
+        if len(inputs) < 2:
+            raise ValueError("Missing base link inputs in Ninja compilation database")
+        merge_library(inputs, lib)
+    elif inputs:
+        # Preserve non-component link inputs such as the pinned compiler builtins.
+        support = "libchromium_base_support.a"
+        merge_library(inputs, lib, support)
+        link_libraries.append(f'"{prefix}/lib/{support}"')
+
     includes = []
     for directory in target["include_dirs"]:
         if not directory.startswith("//"):
             raise ValueError(f"Unexpected non-source include directory: {directory}")
         path = SOURCE / directory[2:]
-        if path.is_relative_to(BUILD / "gen"):
-            rel = "generated/" + path.relative_to(BUILD / "gen").as_posix()
+        if path.is_relative_to(build / "gen"):
+            rel = "generated/" + path.relative_to(build / "gen").as_posix()
         else:
             rel = "source/" + path.relative_to(SOURCE).as_posix()
         dest = sdk / "include" / rel
@@ -233,35 +260,40 @@ def package_library(target, sdk):
   return()
 endif()
 get_filename_component(_chromium_base_root "${{CMAKE_CURRENT_LIST_DIR}}/../../.." ABSOLUTE)
-add_library(ChromiumBase::base STATIC IMPORTED GLOBAL)
-set_target_properties(ChromiumBase::base PROPERTIES IMPORTED_LOCATION "{prefix}/lib/libchromium_base.a")
+add_library(ChromiumBase::base {linkage.upper()} IMPORTED GLOBAL)
+set_target_properties(ChromiumBase::base PROPERTIES IMPORTED_LOCATION "{prefix}/lib/{location}")
 target_include_directories(ChromiumBase::base INTERFACE {' '.join(includes)})
 target_compile_definitions(ChromiumBase::base INTERFACE {defines})
 target_compile_options(ChromiumBase::base INTERFACE {' '.join(flags)})
 target_link_options(ChromiumBase::base INTERFACE {link_options})
-target_link_libraries(ChromiumBase::base INTERFACE {' '.join(dict.fromkeys(system))})
+target_link_libraries(ChromiumBase::base INTERFACE {' '.join(dict.fromkeys(link_libraries))})
 """)
 
 
-def export(target):
-    with tempfile.TemporaryDirectory(dir=SDK.parent) as temporary:
+def export(target, sdk, linkage, build):
+    with tempfile.TemporaryDirectory(dir=sdk.parent) as temporary:
         stage = Path(temporary) / "sdk"
-        package_headers(stage)
-        package_library(target, stage)
-        stage.rename(SDK)
+        package_headers(stage, linkage, build)
+        package_library(target, stage, linkage, build)
+        stage.rename(sdk)
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--linkage", choices=["static", "shared"], default="static")
+    args = parser.parse_args()
     host = platform.system()
     if (host, platform.machine()) not in {("Linux", "x86_64"), ("Darwin", "arm64")}:
         raise SystemExit("Requires native Linux x64 or macOS arm64")
-    if SDK.exists():
-        raise SystemExit(f"SDK destination already exists: {SDK}")
+    sdk = ROOT / "out" / f"{args.linkage}-sdk"
+    if sdk.exists():
+        raise SystemExit(f"SDK destination already exists: {sdk}")
     WORK.mkdir(exist_ok=True, parents=True)
     synchronize(source_lock(host), SOURCE, ROOT / ".cache/standalone", ROOT / "standalone")
     install_tools(host)
-    target = configure(host)
-    export(target)
+    build = SOURCE / "out" / ("sdk-shared" if args.linkage == "shared" else "sdk")
+    target = configure(host, args.linkage, build)
+    export(target, sdk, args.linkage, build)
 
 
 if __name__ == "__main__":

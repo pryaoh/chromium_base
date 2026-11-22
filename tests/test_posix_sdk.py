@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -7,6 +8,43 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import build_posix_sdk as sdk
+
+
+class SharedLibraryTests(unittest.TestCase):
+    def test_exports_native_components_and_only_links_direct_dependencies(self):
+        for host, suffix in (("Linux", ".so"), ("Darwin", ".dylib")):
+            with self.subTest(host=host), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                build = root / "out/sdk-shared"
+                build.mkdir(parents=True)
+                names = [f"lib{name}{suffix}" for name in ("base", "direct", "transitive")]
+                for name in names:
+                    (build / name).write_bytes(name.encode())
+                (build / "sdk_probe.runtime_deps").write_text("\n".join([*names, "gen/table.h"]))
+                (build / "probe.o").touch()
+                (build / "sdk_probe.rsp").write_text("probe.o " + " ".join(names[:2]))
+                compdb = [{"output": "sdk_probe", "command": "clang++ @sdk_probe.rsp", "file": "probe.o"}]
+                target = {"include_dirs": [], "defines": ["COMPONENT_BUILD"], "cflags": [], "cflags_cc": []}
+                stage = root / "relocated sdk"
+                with patch.object(sdk.platform, "system", return_value=host), \
+                     patch.object(sdk, "output", return_value=json.dumps(compdb)):
+                    sdk.package_library(target, stage, "shared", build)
+                lib = stage / "lib"
+                for name in names:
+                    self.assertEqual((lib / name).read_bytes(), name.encode())
+                config = (lib / "cmake/ChromiumBase/ChromiumBaseConfig.cmake").read_text()
+                self.assertIn("SHARED IMPORTED", config)
+                self.assertIn(f'IMPORTED_LOCATION "${{_chromium_base_root}}/lib/{names[0]}"', config)
+                self.assertIn(f'"${{_chromium_base_root}}/lib/{names[1]}"', config)
+                self.assertNotIn(names[2], config)
+                self.assertNotIn(str(build), config)
+
+    def test_requires_base_in_runtime_deps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp)
+            (build / "sdk_probe.runtime_deps").write_text("./sdk_probe\n")
+            with self.assertRaisesRegex(ValueError, "Missing Chromium base"):
+                sdk.copy_component_libraries(build, build, ".so")
 
 
 class ArchiveTests(unittest.TestCase):
@@ -47,6 +85,7 @@ class ArchiveTests(unittest.TestCase):
             for path in inputs:
                 path.write_bytes(b"!<arch>\n")
             failure = subprocess.CompletedProcess([], 1, stderr="error: script line 3: invalid archive")
-            with patch.object(sdk.subprocess, "run", return_value=failure):
+            with patch.object(sdk.platform, "system", return_value="Linux"), \
+                 patch.object(sdk.subprocess, "run", return_value=failure):
                 with self.assertRaisesRegex(RuntimeError, r"broken\.a.*script line 3"):
                     sdk.merge_library(inputs, lib)
