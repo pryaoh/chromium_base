@@ -4,10 +4,26 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
+import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import build_posix_sdk as sdk
+
+
+class ToolInstallTests(unittest.TestCase):
+    def test_macos_installs_otool_package_after_clang(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            (work / "DEPS").write_text("'gn_version': 'test'")
+            with zipfile.ZipFile(work / "gn.zip", "w") as archive:
+                archive.writestr("gn", b"")
+            with patch.object(sdk, "SOURCE", work), patch.object(sdk, "WORK", work), \
+                 patch.object(sdk, "run") as run:
+                sdk.install_tools("Darwin")
+            updater = "tools/clang/scripts/update.py"
+            run.assert_has_calls([call(sys.executable, updater),
+                                  call(sys.executable, updater, "--package", "objdump")])
 
 
 class SharedLibraryTests(unittest.TestCase):

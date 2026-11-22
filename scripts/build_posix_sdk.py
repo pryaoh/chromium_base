@@ -61,6 +61,9 @@ def install_tools(host):
         archive.extract("gn", WORK)
     (WORK / "gn").chmod(0o755)
     run(sys.executable, "tools/clang/scripts/update.py")
+    if host == "Darwin":
+        # Apple's linker driver uses llvm-otool from Chromium's objdump package.
+        run(sys.executable, "tools/clang/scripts/update.py", "--package", "objdump")
     run(sys.executable, "tools/rust/update_rust.py")
 
 
