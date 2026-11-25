@@ -31,14 +31,14 @@ Python 3.10 이상과 Git이 필요합니다. 아래 `python`은 Windows Store �
 
 ```powershell
 # 컴파일러 모드에 관계없이 한 번만 실행
-python scripts/sync_source.py
-python scripts/sync_source.py --verify
+python base/scripts/sync_source.py
+python base/scripts/sync_source.py --verify
 
 # 두 모드의 공통 빌드 도구
-python scripts/sync_tools.py gn ninja rust-toolchain
+python base/scripts/sync_tools.py gn ninja rust-toolchain
 
 # Chromium LLVM 모드를 사용할 때 추가
-python scripts/sync_tools.py chromium-llvm
+python base/scripts/sync_tools.py chromium-llvm
 ```
 
 소스는 Chromium 커밋 `1633b610f5957ddd13a26fe87628c0768067e740`에 고정되어 있습니다.
@@ -92,16 +92,16 @@ GN 생성 중 `dbghelp.dll`을 복사하므로 SDK의 **Debugging Tools for Wind
 
 ```powershell
 # 설정 미리보기와 환경 검사
-python scripts/chromium_base.py plan --llvm-root C:/LLVM
-python scripts/chromium_base.py doctor --llvm-root C:/LLVM
+python base/scripts/chromium_base.py plan --llvm-root C:/LLVM
+python base/scripts/chromium_base.py doctor --llvm-root C:/LLVM
 
 # 외부 LLVM, 정적 라이브러리
-python scripts/chromium_base.py configure --llvm-root C:/LLVM
-python scripts/chromium_base.py build --llvm-root C:/LLVM
+python base/scripts/chromium_base.py configure --llvm-root C:/LLVM
+python base/scripts/chromium_base.py build --llvm-root C:/LLVM
 
 # Chromium LLVM, 동적 라이브러리
-python scripts/chromium_base.py configure --toolchain chromium --linkage shared --output-dir vendor/chromium/out/sh
-python scripts/chromium_base.py build --toolchain chromium --linkage shared --output-dir vendor/chromium/out/sh
+python base/scripts/chromium_base.py configure --toolchain chromium --linkage shared --output-dir vendor/chromium/out/sh
+python base/scripts/chromium_base.py build --toolchain chromium --linkage shared --output-dir vendor/chromium/out/sh
 ```
 
 `--linkage static|shared`, `--configuration release|debug`를 조합합니다.
@@ -127,27 +127,27 @@ Windows에서는 Rust 임시 파일 경로가 길어질 수 있습니다. 이 PC
 
 ## SDK와 CMake 연결
 
-`scripts/export_sdk.py`는 성공한 **Windows x64 / static 또는 shared / Release / libc++** 빌드에서
+`base/scripts/export_sdk.py`는 성공한 **Windows x64 / static 또는 shared / Release / libc++** 빌드에서
 SDK를 만듭니다. 원본 소스나 빌드의 `args.gn`은 수정하지 않습니다. 별도의 GN 소비 타깃에서
 공개 include·define·옵션을 얻고, Ninja의 실제 링크 입력으로 전이 의존성을 수집합니다.
 버전별 라이브러리 이름 목록을 별도로 관리하지 않습니다.
 
 ```powershell
 # 먼저 Chromium LLVM 정적 Release를 빌드한 경우
-python scripts/export_sdk.py `
+python base/scripts/export_sdk.py `
   --toolchain chromium `
   --build-dir vendor/chromium/out/chromium-base/windows-x64-chromium-static-release `
   --destination out/sdk/windows-x64-chromium-static-release
 
 # 이 PC의 기존 검증 빌드(dependency-audit)는 드라이버 manifest 생성 이전의 산출물입니다.
 # 이를 사용할 때만 명시적으로 --allow-unmanaged-build를 전달합니다.
-python scripts/export_sdk.py `
+python base/scripts/export_sdk.py `
   --toolchain chromium --allow-unmanaged-build `
   --build-dir vendor/chromium/out/dependency-audit `
   --destination out/sdk/from-audited-build
 
 # 위의 짧은 경로에서 동적 Release 빌드를 완료한 경우
-python scripts/export_sdk.py `
+python base/scripts/export_sdk.py `
   --toolchain chromium --linkage shared `
   --build-dir vendor/chromium/out/sh `
   --destination out/sdk/windows-x64-chromium-shared-release
@@ -210,10 +210,10 @@ Debug·다중 구성 generator·추가 sanitizer 설정은 현재 내보내기 �
 C/C++ 혼합 타깃에 이 C++ 옵션을 그대로 전달하지 마세요.
 외부 LLVM 모드에도 같은 내보내기 경로를 사용하며 해당 LLVM으로 빌드한 SDK를 사용해야 합니다.
 
-`tests/sdk_consumer`와 `tests/verify_sdk.py`는 문자열·JSON·파일·태스크 실행 및 정적 라이브러리를
+`base/tests/sdk_consumer`와 `base/tests/verify_sdk.py`는 문자열·JSON·파일·태스크 실행 및 정적 라이브러리를
 포함한 외부 연결 검증용입니다. Ninja의 실제 헤더 의존성을 검사해 원본 소스/빌드 경로 참조와
 동봉 libc++·생성 헤더 사용 여부를 확인합니다. 사용자용 샘플과 추가 방법은
-[samples/README.md](../../samples/README.md)에 있습니다.
+[base/samples/README.md](../../samples/README.md)에 있습니다.
 
 이 PC에서 검증된 정적 SDK는 `out/sdk/relocated sdk/windows-x64-chromium-static-release`입니다.
 파일 크기 합계는 약 **399 MiB**(10,017개 파일)이며 원본 빌드·도구·캐시 용량은 별도입니다.
@@ -231,7 +231,7 @@ CMake는 4.3.1-msvc1로 검증했습니다. 전체 Python 단위 테스트는 67
 컴파일·링크·실행을 통과했습니다. 소비자의 실제 헤더 의존성 2,307건에 원본 소스/빌드
 경로가 없으며, 실행 파일의 PE import에 `base.dll`이 포함됨을 확인했습니다.
 
-`tests/verify_dll_runtime.py`로 두 실행 파일을 각각 별도 폴더에 배치하고
+`base/tests/verify_dll_runtime.py`로 두 실행 파일을 각각 별도 폴더에 배치하고
 PATH를 Windows 및 System32만 남긴 상태에서 실행했습니다. 정상 출력과 함께
 `base.dll`을 잠시 제거했을 때 `0xC0000135`(DLL 없음)로 실패하는 것도 확인했습니다.
 결과는 `out/shared-deployment/hello_base/runtime-verification.json`과
@@ -241,7 +241,7 @@ PATH를 Windows 및 System32만 남긴 상태에서 실행했습니다. 정상 �
 검증 재실행 예시(새 `--work` 경로 필요):
 
 ```powershell
-python tests/verify_sdk.py `
+python base/tests/verify_sdk.py `
   --sdk 'out/sdk/relocated sdk/windows-x64-chromium-static-release' `
   --llvm-root .tools/chromium-llvm --cmake cmake --ninja .tools/ninja/ninja.exe `
   --work out/sdk-consumer-check
@@ -273,9 +273,9 @@ SDK는 `out/sdk/relocated sdk/windows-x64-external-shared-release`,
 이 결과는 위 개발 빌드에 대한 것이며 다른 LLVM 버전의 호환성을 보장하지 않습니다.
 
 ```powershell
-python scripts/chromium_base.py configure --toolchain external --llvm-root .tools/external-llvm --linkage shared --output-dir vendor/chromium/out/eh
-python scripts/chromium_base.py build --toolchain external --llvm-root .tools/external-llvm --linkage shared --output-dir vendor/chromium/out/eh
-python scripts/export_sdk.py --toolchain external --linkage shared --build-dir vendor/chromium/out/eh --destination out/sdk/windows-x64-external-shared-release
+python base/scripts/chromium_base.py configure --toolchain external --llvm-root .tools/external-llvm --linkage shared --output-dir vendor/chromium/out/eh
+python base/scripts/chromium_base.py build --toolchain external --llvm-root .tools/external-llvm --linkage shared --output-dir vendor/chromium/out/eh
+python base/scripts/export_sdk.py --toolchain external --linkage shared --build-dir vendor/chromium/out/eh --destination out/sdk/windows-x64-external-shared-release
 ```
 
 정적 구성은 `--linkage static`과 `--output-dir vendor/chromium/out/es`를 사용합니다.
@@ -301,9 +301,9 @@ LLVM 자체보다 공통 Rust 도구가 더 큽니다. Visual Studio/Windows SDK
 빌드 산출물은 위 표에 포함하지 않습니다.
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m unittest discover -s base/tests -v
 ```
 
 테스트는 선택 추출, Git 없는 소스 식별, 파일·도구 무결성, 덮어쓰기 방지,
 두 LLVM 설정과 출력 분리, 실패 전파, SDK 명령 해석과 경로 처리를 검증합니다. GN/컴파일 경계의 단위 테스트는
-대역을 사용합니다. 일반 CI는 Python 단위 테스트를 실행합니다. 태그 릴리스의 네이티브 빌드는 [별도 워크플로](../../.github/workflows/static-sdk.yml)에서 실행합니다.
+대역을 사용합니다. 일반 CI는 Python 단위 테스트를 실행합니다. 태그 릴리스의 네이티브 빌드는 [별도 워크플로](../../../.github/workflows/static-sdk.yml)에서 실행합니다.

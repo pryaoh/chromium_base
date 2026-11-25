@@ -10,7 +10,7 @@ import sys
 import tempfile
 import zipfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def main():
@@ -58,7 +58,7 @@ def main():
                 for key in ("LD_LIBRARY_PATH", "LD_PRELOAD", "DYLD_LIBRARY_PATH",
                             "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES"):
                     env.pop(key, None)
-        subprocess.run([cmake, "-S", ROOT / "samples/hello_base", "-B", build,
+        subprocess.run([cmake, "-S", ROOT / "base/samples/hello_base", "-B", build,
                         "-G", "Ninja", *options], env=env, check=True)
         subprocess.run([cmake, "--build", build], env=env, check=True)
         result = subprocess.check_output([build / "bin" / executable, "--name=SDK"],
@@ -69,7 +69,7 @@ def main():
             dumpbin = shutil.which("dumpbin.exe", path=env["PATH"])
             if not dumpbin:
                 raise SystemExit("Missing dumpbin.exe in the Windows build environment")
-            subprocess.run([sys.executable, ROOT / "tests/verify_dll_runtime.py",
+            subprocess.run([sys.executable, ROOT / "base/tests/verify_dll_runtime.py",
                             "--sdk", relocated, "--executable", build / "bin" / executable,
                             "--deployment", work / "deployment", "--dumpbin", dumpbin],
                            env=env, check=True)

@@ -15,7 +15,7 @@ from sync_source import INVENTORY, verify_snapshot
 from sync_tools import verify_installation
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ".chromium-base.json"
 
 
@@ -363,14 +363,16 @@ def configure(plan, report):
     write_manifest(plan, report, "configured")
 
 
-def build(plan, report):
+def build(plan, report, target="base", jobs=None):
     manifest = read_manifest(plan, report)
     if manifest["state"] not in ("configured", "built", "build_failed"):
         raise ValueError("Run configure successfully before build")
     verify_generated_toolchain(plan)
     command = ([report["ninja"]] if report.get("ninja") else
                [sys.executable, str(Path(report["depot_tools"]) / "autoninja.py")])
-    command += ["-C", plan["output"], "base"]
+    if jobs is not None:
+        command += ["-j", str(jobs)]
+    command += ["-C", plan["output"], target]
     write_manifest(plan, report, "building")
     try:
         result = run_command(command, cwd=plan["source"], env=build_environment(report))

@@ -20,7 +20,7 @@ $sdk = (Resolve-Path 'out/sdk/relocated sdk/windows-x64-chromium-static-release'
 $llvm = (Resolve-Path '.tools/chromium-llvm').Path
 $ninja = (Resolve-Path '.tools/ninja/ninja.exe').Path
 
-cmake -S samples -B out/samples -G Ninja `
+cmake -S base/samples -B out/samples -G Ninja `
   "-DCMAKE_MAKE_PROGRAM=$ninja" `
   "-DCMAKE_PREFIX_PATH=$sdk" `
   "-DCMAKE_TOOLCHAIN_FILE=$sdk/lib/cmake/ChromiumBase/chromium-base-toolchain.cmake" `
@@ -46,7 +46,7 @@ cmake --build out/samples
 
 ## 하나만 빌드
 
-위 구성 명령의 `-S samples`를 `-S samples/hello_base`, `-B out/samples`를
+위 구성 명령의 `-S base/samples`를 `-S base/samples/hello_base`, `-B out/samples`를
 `-B out/hello_base`로 바꾸면 단독 프로젝트로 빌드합니다. 나머지 SDK 옵션은 같습니다.
 
 ```powershell
@@ -67,7 +67,7 @@ shared SDK를 내보낸 뒤에는 별도의 빌드 디렉터리에서 같은 샘
 
 ```powershell
 $sdk = (Resolve-Path 'out/sdk/relocated sdk/windows-x64-chromium-shared-release').Path
-cmake -S samples -B out/samples-shared -G Ninja `
+cmake -S base/samples -B out/samples-shared -G Ninja `
   "-DCMAKE_MAKE_PROGRAM=$ninja" `
   "-DCMAKE_PREFIX_PATH=$sdk" `
   "-DCMAKE_TOOLCHAIN_FILE=$sdk/lib/cmake/ChromiumBase/chromium-base-toolchain.cmake" `
@@ -109,8 +109,8 @@ $llvm = (Resolve-Path '.tools/external-llvm').Path
 
 ## 샘플 추가
 
-1. `samples/hello_base`를 새 디렉터리로 복사하고 `project`, 실행 타깃 이름과 코드를 변경합니다.
-2. `samples/CMakeLists.txt`에 `add_subdirectory(새_디렉터리)`를 추가합니다.
+1. `base/samples/hello_base`를 새 디렉터리로 복사하고 `project`, 실행 타깃 이름과 코드를 변경합니다.
+2. `base/samples/CMakeLists.txt`에 `add_subdirectory(새_디렉터리)`를 추가합니다.
 
 각 샘플은 `find_package(ChromiumBase CONFIG REQUIRED)`와
 `target_link_libraries(타깃 PRIVATE ChromiumBase::base)`를 사용합니다.

@@ -18,7 +18,7 @@ import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 INVENTORY = ".chromium-source.json"
 
 
@@ -267,7 +267,9 @@ def synchronize(lock, destination, cache_root, overlay):
         raise ValueError(f"Destination already exists; verify it or choose a fresh path: {destination}")
     validate_lock(lock)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    stage = destination.parent / (destination.name + ".staging-" + uuid.uuid4().hex)
+    # A short sibling keeps deep Chromium inputs within Windows path limits.
+    # mkdir inherits the destination parent's permissions for the published tree.
+    stage = destination.parent / ("s-" + uuid.uuid4().hex[:12])
     stage.mkdir()
     try:
         prepared = []

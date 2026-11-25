@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def main():
@@ -42,7 +42,7 @@ def main():
                 key, value = entry.split('=', 1)
                 env[key] = value
     source = work / 'source'
-    shutil.copytree(ROOT / 'tests/sdk_consumer', source)
+    shutil.copytree(ROOT / 'base/tests/sdk_consumer', source)
     build = work / 'build'
     def run(command, name):
         result = subprocess.run([str(x) for x in command], env=env, capture_output=True,

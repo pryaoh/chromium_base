@@ -1,0 +1,8 @@
+group("default") {
+  deps = [
+    "//base",
+    "//net",
+    "//sdk_probe:base_consumer",
+    "//sdk_probe:net_consumer",
+  ]
+}

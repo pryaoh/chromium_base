@@ -15,7 +15,7 @@ from sdk_metadata import (consumer_flags, expanded_command, link_contract,
                           parse_args, runtime_contract, validate_configuration)
 from sync_source import INVENTORY, regular_files, sha256, verify_snapshot
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 HEADER_SUFFIXES = {'.h', '.hh', '.hpp', '.hxx', '.inc', '.inl', '.ipp', '.tcc', '.def'}
 
 
@@ -196,7 +196,7 @@ def package_config(stage, includes, flags, defines, contract, inputs, compiler_h
               'unset(_cb_root)', 'unset(_cb_compiler_hash)', 'unset(_cb_linker_hash)', '']
     (directory / 'ChromiumBaseConfig.cmake').write_text('\n'.join(lines), encoding='utf-8')
     for name in ('chromium-base-toolchain.cmake', 'chromium-base-rules.cmake', 'chromium-base-deploy.cmake'):
-        shutil.copy2(ROOT / 'cmake' / name, directory / name)
+        shutil.copy2(ROOT / 'base/cmake' / name, directory / name)
     (directory / 'chromium-base-runtime.cmake').write_text(
         f'set(CMAKE_MSVC_RUNTIME_LIBRARY {crt})\n', encoding='utf-8')
 

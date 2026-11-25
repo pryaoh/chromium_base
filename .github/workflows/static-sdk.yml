@@ -58,13 +58,13 @@ jobs:
           LINKAGE: ${{ matrix.linkage }}
         run: |
           set -euo pipefail
-          python scripts/sync_source.py
-          python scripts/sync_tools.py gn ninja rust-toolchain chromium-llvm
+          python base/scripts/sync_source.py
+          python base/scripts/sync_tools.py gn ninja rust-toolchain chromium-llvm
           output=vendor/chromium/out/s
           if [[ "$LINKAGE" == shared ]]; then output=vendor/chromium/out/sh; fi
-          python scripts/chromium_base.py configure --toolchain chromium --linkage "$LINKAGE" --output-dir "$output"
-          python scripts/chromium_base.py build --toolchain chromium --linkage "$LINKAGE" --output-dir "$output"
-          python scripts/export_sdk.py --toolchain chromium --linkage "$LINKAGE" --build-dir "$output" --destination "out/$LINKAGE-sdk"
+          python base/scripts/chromium_base.py configure --toolchain chromium --linkage "$LINKAGE" --output-dir "$output"
+          python base/scripts/chromium_base.py build --toolchain chromium --linkage "$LINKAGE" --output-dir "$output"
+          python base/scripts/export_sdk.py --toolchain chromium --linkage "$LINKAGE" --build-dir "$output" --destination "out/$LINKAGE-sdk"
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -74,7 +74,7 @@ jobs:
 
       - name: Build and export Unix SDK
         if: runner.os != 'Windows'
-        run: python scripts/build_posix_sdk.py --linkage ${{ matrix.linkage }}
+        run: python base/scripts/build_posix_sdk.py --linkage ${{ matrix.linkage }}
 
       - name: Read release tag from the built Chromium source
         id: version
@@ -96,7 +96,7 @@ jobs:
               print(f"tag={tag}", file=output)
 
       - name: Archive SDK and test relocated CMake consumer
-        run: python scripts/package_sdk.py ${{ matrix.platform }} --linkage ${{ matrix.linkage }}
+        run: python base/scripts/package_sdk.py ${{ matrix.platform }} --linkage ${{ matrix.linkage }}
 
       - uses: actions/upload-artifact@v4
         with:

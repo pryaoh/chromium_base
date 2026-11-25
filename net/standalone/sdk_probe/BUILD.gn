@@ -1,0 +1,12 @@
+# Export the public compile, link and runtime contracts that GN gives an executable.
+foreach(component, [ "base", "net" ]) {
+  executable("${component}_consumer") {
+    sources = [ "probe.cc" ]
+    deps = [ "//${component}" ]
+    if (component == "net") {
+      # Standalone network clients initialize ICU before using URLRequest.
+      deps += [ "//base:i18n" ]
+    }
+    write_runtime_deps = "$root_out_dir/${target_name}.runtime_deps"
+  }
+}
